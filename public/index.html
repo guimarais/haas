@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="A local Pi assistant for component research, KiCad and XTrackCAD.">
   <title>Haas — Workbench</title>
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/style.css">
   <script src="/vendor/marked.js" defer></script>
   <script src="/vendor/purify.js" defer></script>
@@ -36,6 +37,7 @@
         <label class="sr-only" for="model">Model</label>
         <input id="model" list="models" aria-label="Model" spellcheck="false" value="gpt-5.4">
         <datalist id="models"></datalist>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false" title="Switch to dark theme">☾</button>
       </div>
     </header>
     <div id="notice" role="status" hidden></div>

@@ -165,7 +165,7 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
         return;
       }
       const assets = {
-        '/': path.join(APP, 'public/index.html'), '/app.js': path.join(APP, 'public/app.js'), '/style.css': path.join(APP, 'public/style.css'),
+        '/': path.join(APP, 'public/index.html'), '/app.js': path.join(APP, 'public/app.js'), '/theme.js': path.join(APP, 'public/theme.js'), '/style.css': path.join(APP, 'public/style.css'),
         '/vendor/marked.js': path.join(APP, 'node_modules/marked/lib/marked.umd.js'),
         '/vendor/purify.js': path.join(APP, 'node_modules/dompurify/dist/purify.min.js'),
       };

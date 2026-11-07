@@ -1,4 +1,5 @@
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#252d29;background:#fafbf9;font-synthesis:none;font-size:14px;--muted:#7b847e;--line:#e3e8e2;--green:#357358}
+:root{color-scheme:light}.theme-toggle{display:grid;place-items:center;flex-shrink:0;width:34px;height:34px;border:1px solid var(--line);border-radius:6px;background:#fff;color:#4b654e;font-size:20px;line-height:1}.theme-toggle:hover{background:#eef3ea}
 /* Saved conversations share Pi's existing session files. */
 .sidebar{position:relative;overflow-y:auto}.sidebar .new-chat{margin:28px 0 22px;flex-shrink:0}.history-label{margin-bottom:8px}.history-nav{min-height:65px;max-height:190px;overflow:auto;flex-shrink:0;margin:0 0 24px}.history-list{list-style:none;padding:0;margin:0}.history-list button{width:100%;display:flex;align-items:center;gap:8px;padding:10px 9px;border:0;border-radius:6px;background:transparent;color:#5b705e;text-align:left;font-size:11px}.history-list button:hover{background:#e4ebdf}.history-list button[aria-current]{background:#dfe9d9;color:#304f36}.history-list button span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.history-list time{font-size:9px;color:#8a9786;white-space:nowrap}.sidebar-toggle,.sidebar-close{display:none}.sidebar .file-list{flex-shrink:0;max-height:150px}.sidebar .side-footer{flex-shrink:0}
 @media(max-width:720px){header::before{display:none!important}.sidebar-toggle{display:block;border:1px solid var(--line);border-radius:6px;background:white;color:#4b654e;padding:8px;font-size:11px}.sidebar.is-open{display:flex;position:fixed;inset:0 auto 0 0;z-index:20;width:280px;box-shadow:12px 0 35px #263d3026}.sidebar-close{display:block;position:absolute;right:14px;top:20px;border:0;background:transparent;color:#5b705e;font-size:25px}.history-nav{max-height:230px}}
@@ -7,3 +8,33 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 /* Conversation content */
 #messages:empty{display:none}.message-body{white-space:normal;overflow-x:auto}.message-body p{margin:0 0 12px}.message-body p:last-child{margin-bottom:0}.message-body h1,.message-body h2,.message-body h3,.message-body h4{font-size:15px;line-height:1.5;margin:20px 0 10px;color:#344f3b}.message-body strong{font-weight:650}.message-body ul,.message-body ol{padding-left:22px;margin:10px 0}.message-body li{margin-bottom:7px}.message-body pre{padding:14px;background:#f0f3ed;border-radius:7px;overflow:auto;font-size:11px}.message-body code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em;background:#eef2ea;border-radius:3px;padding:2px 4px}.message-body pre code{padding:0}.message-body table{border-collapse:collapse;width:100%;font-size:11px;line-height:1.6;margin:18px 0}.message-body th,.message-body td{padding:10px 12px;border:1px solid var(--line);text-align:left;min-width:90px;vertical-align:top}.message-body th{background:#eef2e9;color:#4c654e;font-weight:600}.message-body blockquote{margin:12px 0;padding:0 15px;border-left:3px solid #b5c8ad;color:#7d8977}.tool-body{white-space:normal}.tool-body pre{white-space:pre-wrap}.welcome{margin-top:clamp(25px,5vh,70px)}
+
+/* Dark surfaces keep the workbench's green accent and native form controls. */
+:root[data-theme="dark"]{color-scheme:dark;--page:#151c18;--surface:#1e2822;--raised:#28362c;--muted:#a3b1a6;--line:#38483d;--green:#9bd0ad;color:#e3ece5;background:var(--page)}
+[data-theme="dark"] .sidebar{background:#19231d}
+[data-theme="dark"] .brand,[data-theme="dark"] .welcome h1,[data-theme="dark"] .starters button,[data-theme="dark"] .message-body :is(h1,h2,h3,h4){color:#e0eee2}
+[data-theme="dark"] :is(.new-chat,.starters button,.model-controls select,.model-controls input,.theme-toggle,.sidebar-toggle,#composer,#stop){background:var(--surface);border-color:var(--line);color:#d9e5dc}
+[data-theme="dark"] :is(.new-chat:hover,.theme-toggle:hover,.history-list button:hover){background:var(--raised)}
+[data-theme="dark"] .starters button:hover{border-color:#739d7d}
+[data-theme="dark"] .history-list button{color:#b9cdbd}
+[data-theme="dark"] .history-list button[aria-current]{background:#304735;color:#d7efda}
+[data-theme="dark"] :is(.history-list time,.brand-sub,.side-label,.capability small,.files-title button,.side-footer small,.breadcrumb,.welcome>p,.starters button>span:last-of-type,.starters b,.message.user .message-label,.attach,#status,.composer-note){color:var(--muted)}
+[data-theme="dark"] :is(.capability,.breadcrumb strong,.side-footer){color:#c0d0c2}
+[data-theme="dark"] :is(.capability>span,.eyebrow,.message-label){color:#a7c9ae}
+[data-theme="dark"] .starter-icon{background:var(--raised);color:var(--green)}
+[data-theme="dark"] .file-list li{border-color:var(--line)}
+[data-theme="dark"] .composer-area{background:linear-gradient(transparent,var(--page) 16px)}
+[data-theme="dark"] #composer{box-shadow:0 5px 24px #0002}
+[data-theme="dark"] #message{color:#e3ece5}
+[data-theme="dark"] #message::placeholder{color:#a0afa3}
+[data-theme="dark"] .message.user{background:var(--raised);border-color:var(--line)}
+[data-theme="dark"] .tool{background:var(--surface);color:#b9cdbd}
+[data-theme="dark"] .tool.failed{border-color:#9c6254;color:#f2b4a5}
+[data-theme="dark"] .error{color:#f2b4a5}
+[data-theme="dark"] #notice{background:#332e20;border-color:#70603a;color:#efd495}
+[data-theme="dark"] .message-body pre{background:#19231d}
+[data-theme="dark"] :is(.message-body code,.message-body th,.attachment){background:var(--raised);color:#d5e5d7}
+[data-theme="dark"] .message-body blockquote{border-color:#729279;color:#b3c5b7}
+[data-theme="dark"] #send{background:#94c5a2;color:#14271b}
+[data-theme="dark"] #send:hover{background:#b0dab8}
+@media(max-width:720px){header{gap:8px}.model-controls{gap:6px}.model-controls select{width:90px}.model-controls input{width:clamp(80px,25vw,120px)}}

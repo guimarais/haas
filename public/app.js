@@ -1,0 +1,269 @@
+const $ = id => document.getElementById(id);
+const messages = $('messages');
+let state, pendingFiles = [], running = false, reconnectTimer;
+let selected = { openai: 'gpt-5.4', ollama: '' };
+
+function notice(text = '') {
+  $('notice').textContent = text;
+  $('notice').hidden = !text;
+}
+
+async function api(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { 'X-Haas-Request': '1', ...options.headers } });
+  if (!response.ok) {
+    const result = await response.json();
+    throw new Error(result.error || `Request failed (${response.status}).`);
+  }
+  return response;
+}
+
+function fileUrl(value) {
+  let file = value;
+  if (state?.workspace && file.startsWith(`${state.workspace}/`)) file = file.slice(state.workspace.length + 1);
+  if (file.startsWith('/') || file.startsWith('..') || /^(?:javascript|data|file):/i.test(file)) return null;
+  return `/files/${file.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+// Sanitise generated HTML before insertion; external images/iframes never load.
+function richText(element, text) {
+  element.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }), {
+    ALLOWED_TAGS: ['p', 'strong', 'em', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'br', 'h1', 'h2', 'h3', 'h4', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr'],
+    ALLOWED_ATTR: ['href', 'title'],
+  });
+  for (const link of element.querySelectorAll('a')) {
+    const target = link.getAttribute('href') || '';
+    const url = /^https?:\/\//i.test(target) ? target : fileUrl(target);
+    if (url) {
+      link.href = url;
+      if (/^https?:/.test(url)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    } else link.replaceWith(document.createTextNode(link.textContent));
+  }
+}
+
+function scrollDown() { $('scroll-area').scrollTop = $('scroll-area').scrollHeight; }
+
+function bubble(role, text = '', error) {
+  const article = document.createElement('article');
+  article.className = `message ${role}`;
+  const label = document.createElement('div');
+  label.className = 'message-label';
+  label.textContent = role === 'user' ? 'YOU' : 'HAAS';
+  const content = document.createElement('div');
+  content.className = 'message-body';
+  richText(content, text);
+  article.append(label, content);
+  if (error) {
+    const failure = document.createElement('p');
+    failure.className = 'error'; failure.textContent = error; article.append(failure);
+  }
+  messages.append(article);
+  $('welcome').hidden = true;
+  scrollDown();
+  return content;
+}
+
+function tool(name, args, output, isError = false) {
+  const details = document.createElement('details');
+  details.className = `tool ${isError ? 'failed' : ''}`;
+  const summary = document.createElement('summary');
+  summary.textContent = `${output === undefined ? '◌' : isError ? '!' : '✓'} ${name.replace(/^mcp__/, '').replaceAll('__', ' › ')}`;
+  const body = document.createElement('div');
+  body.className = 'tool-body';
+  richText(body, [args ? JSON.stringify(args, null, 2) : '', output || 'Running…'].filter(Boolean).join('\n\n'));
+  details.append(summary, body);
+  messages.append(details);
+  $('welcome').hidden = true;
+  scrollDown();
+  return { details, summary, body };
+}
+
+function setRunning(value) {
+  running = value;
+  for (const id of ['send', 'provider', 'model', 'new-chat', 'attach']) $(id).disabled = value;
+  document.querySelectorAll('#conversations button').forEach(button => { button.disabled = value; });
+  $('stop').hidden = !value;
+  $('status').textContent = value ? 'Working…' : 'Ready';
+  $('message').disabled = value;
+}
+
+function renderFiles(files) {
+  $('files').replaceChildren();
+  $('no-files').hidden = files.length > 0;
+  for (const file of files) {
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.textContent = file.path;
+    link.href = fileUrl(file.path);
+    link.title = `Download ${file.path}`;
+    li.append(link); $('files').append(li);
+  }
+}
+
+function showSidebar(open) {
+  $('workspace-sidebar').classList.toggle('is-open', open);
+  $('toggle-sidebar').setAttribute('aria-expanded', String(open));
+}
+
+function renderConversations(conversations) {
+  $('conversations').replaceChildren();
+  for (const conversation of conversations) {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = conversation.title;
+    button.disabled = running;
+    if (conversation.active) button.setAttribute('aria-current', 'page');
+    const title = document.createElement('span');
+    title.textContent = conversation.title;
+    const date = document.createElement('time');
+    date.dateTime = conversation.updatedAt;
+    date.textContent = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(conversation.updatedAt));
+    button.append(title, date);
+    button.addEventListener('click', async () => {
+      if (running) return;
+      if (conversation.active) { showSidebar(false); return; }
+      setRunning(true);
+      try {
+        await api('/api/conversations/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: conversation.id }) });
+        pendingFiles = []; $('attachments').replaceChildren();
+        await refresh({ history: true });
+        showSidebar(false);
+      } catch (error) { notice(error.message); }
+      finally { setRunning(false); }
+    });
+    item.append(button); $('conversations').append(item);
+  }
+}
+
+function modelOptions() {
+  $('models').replaceChildren();
+  for (const model of state.models[$('provider').value] || []) {
+    const option = document.createElement('option'); option.value = model; $('models').append(option);
+  }
+}
+
+async function refresh({ history = false } = {}) {
+  state = await (await api('/api/state')).json();
+  renderFiles(state.files);
+  renderConversations(state.conversations);
+  if (history) {
+    selected[state.selection.provider] = state.selection.model;
+    $('provider').value = state.selection.provider;
+    $('model').value = state.selection.model;
+    messages.replaceChildren();
+    $('welcome').hidden = false;
+    for (const entry of state.messages) {
+      if (entry.role === 'tool') tool(entry.name, null, entry.text, entry.isError);
+      else bubble(entry.role, entry.text, entry.error);
+    }
+    if (state.busy) {
+      notice('A task is still running. Its saved results will appear when it finishes.');
+      setRunning(true);
+      reconnectTimer ||= setInterval(async () => {
+        try {
+          await refresh({ history: true });
+          if (!state.busy) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(); }
+        } catch (error) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(error.message); }
+      }, 4000);
+    } else if (!state.openaiConfigured) notice('OpenAI chat and web research need OPENAI_API_KEY on the backend. You can still use a tool-capable Ollama model for local design work.');
+    else notice(state.warnings.join(' · '));
+  }
+  modelOptions();
+}
+
+$('provider').addEventListener('change', () => {
+  $('model').value = selected[$('provider').value] || state.models[$('provider').value]?.[0] || '';
+  modelOptions();
+  notice($('provider').value === 'ollama' ? (state.ollamaError || 'Choose an Ollama model with tool support. Web research still uses OpenAI.') : (!state.openaiConfigured ? 'Set OPENAI_API_KEY on the backend and restart.' : ''));
+});
+$('model').addEventListener('change', () => { selected[$('provider').value] = $('model').value; });
+document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => { $('message').value = button.dataset.prompt; $('message').focus(); }));
+$('refresh').addEventListener('click', () => refresh().catch(error => notice(error.message)));
+$('toggle-sidebar').addEventListener('click', () => showSidebar(!$('workspace-sidebar').classList.contains('is-open')));
+$('close-sidebar').addEventListener('click', () => { showSidebar(false); $('toggle-sidebar').focus(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') showSidebar(false); });
+$('stop').addEventListener('click', () => api('/api/abort', { method: 'POST' }).catch(error => notice(error.message)));
+$('new-chat').addEventListener('click', async () => {
+  if (running) return;
+  setRunning(true);
+  try {
+    await api('/api/new', { method: 'POST' });
+    pendingFiles = []; $('attachments').replaceChildren();
+    await refresh({ history: true });
+    showSidebar(false);
+  } catch (error) { notice(error.message); }
+  finally { setRunning(false); }
+});
+$('attach').addEventListener('click', () => $('upload').click());
+$('upload').addEventListener('change', async () => {
+  const batch = crypto.randomUUID();
+  setRunning(true); notice('Importing working copies…');
+  try {
+    for (const file of $('upload').files) {
+      const result = await (await api(`/api/upload?batch=${batch}&name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })).json();
+      pendingFiles.push(result.path);
+      const chip = document.createElement('span'); chip.className = 'attachment'; chip.textContent = `↳ ${result.name}`; $('attachments').append(chip);
+    }
+    await refresh(); notice();
+  } catch (error) { notice(error.message); }
+  finally { setRunning(false); $('upload').value = ''; $('message').focus(); }
+});
+$('message').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); }
+});
+$('composer').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (running || !$('message').value.trim()) return;
+  const draft = $('message').value.trim();
+  const attachmentPaths = [...pendingFiles];
+  const message = draft + (attachmentPaths.length ? `\n\nImported working copies (workspace-relative paths):\n${attachmentPaths.map(file => `- ${file}`).join('\n')}` : '');
+  setRunning(true); notice();
+  let current, currentText = '', accepted = false;
+  const tools = new Map();
+  try {
+    const response = await api('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, provider: $('provider').value, model: $('model').value }) });
+    accepted = true;
+    bubble('user', message);
+    $('message').value = ''; pendingFiles = []; $('attachments').replaceChildren();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', finished = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let newline;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const update = JSON.parse(line);
+        if (update.type === 'assistant_start') { current = bubble('assistant'); currentText = ''; }
+        if (update.type === 'delta') { current ||= bubble('assistant'); currentText += update.text; richText(current, currentText); }
+        if (update.type === 'assistant_end') {
+          current ||= bubble('assistant');
+          if (update.text || currentText || update.error) richText(current, update.text || currentText || update.error);
+          else current.closest('.message').remove();
+          if (update.error) notice(update.error);
+          current = null;
+        }
+        if (update.type === 'tool_start') tools.set(update.id, tool(update.name, update.args));
+        if (update.type === 'tool_end') {
+          const entry = tools.get(update.id) || tool(update.name);
+          entry.summary.textContent = `${update.isError ? '!' : '✓'} ${update.name.replace(/^mcp__/, '').replaceAll('__', ' › ')}`;
+          entry.details.classList.toggle('failed', update.isError);
+          richText(entry.body, update.text || 'Completed.');
+        }
+        if (update.type === 'error' || update.type === 'status') notice(update.text);
+        if (update.type === 'done') finished = true;
+        scrollDown();
+      }
+      if (done) { if (!finished) throw new Error('Connection interrupted. Refresh to see saved progress; retry only after checking the result.'); break; }
+    }
+  } catch (error) { notice(error.message); if (!accepted) $('message').value = draft; }
+  finally {
+    setRunning(false);
+    try { await refresh(); } catch (error) { notice(error.message); }
+    $('message').focus();
+  }
+});
+
+refresh({ history: true }).catch(error => notice(`Could not connect: ${error.message}`));

@@ -1,0 +1,52 @@
+# Local credentials and machine-specific agent/MCP configuration
+.env
+.env.*
+!.env.example
+/mcp.json
+.aws/
+.codex/
+.agents/
+.pi/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Conversations, imported originals, generated designs, caches and MCP logs
+/data/
+/workspace/
+
+# Node.js dependencies, builds and test output (keep package-lock.json)
+node_modules/
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+.npm/
+*.log
+*.log.*
+.eslintcache
+
+# Python bytecode, virtual environments and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

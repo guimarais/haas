@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A local Pi assistant for component research, KiCad and XTrackCAD.">
+  <title>Haas — Workbench</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/marked.js" defer></script>
+  <script src="/vendor/purify.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar" id="workspace-sidebar">
+    <button id="close-sidebar" class="sidebar-close" aria-label="Close conversation history">×</button>
+    <a class="brand" href="/" aria-label="Haas home"><span class="brand-icon">h.</span><span>haas<span class="brand-sub">PERSONAL WORKBENCH</span></span></a>
+    <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+    <div class="side-label history-label">CONVERSATIONS</div>
+    <nav aria-label="Conversation history" class="history-nav"><ul id="conversations" class="history-list"></ul></nav>
+    <div class="side-label">CAPABILITIES</div>
+    <div class="capability"><span>⌕</span><div>Component research<small>Live prices · Portugal / EUR</small></div></div>
+    <div class="capability"><span>▦</span><div>PCB design<small>KiCad · Konnect MCP</small></div></div>
+    <div class="capability"><span>⌘</span><div>Railway layouts<small>XTrackCAD · Turnout MCP</small></div></div>
+    <div class="side-label files-title">PROJECT FILES <button id="refresh" title="Refresh project files" aria-label="Refresh project files">↻</button></div>
+    <p id="no-files" class="muted small">Design files and research outputs will appear here.</p>
+    <ul id="files" class="file-list"></ul>
+    <div class="side-footer"><span class="dot"></span> Runs on your computer<small>Powered by Pi · Single-user workspace</small></div>
+  </aside>
+  <main>
+    <header>
+      <button id="toggle-sidebar" class="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="false">History</button>
+      <div class="breadcrumb">WORKSPACE <span>/</span> <strong>Conversation</strong></div>
+      <div class="model-controls">
+        <label class="sr-only" for="provider">Model provider</label>
+        <select id="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama · local</option></select>
+        <label class="sr-only" for="model">Model</label>
+        <input id="model" list="models" aria-label="Model" spellcheck="false" value="gpt-5.4">
+        <datalist id="models"></datalist>
+      </div>
+    </header>
+    <div id="notice" role="status" hidden></div>
+    <div id="scroll-area">
+      <section id="welcome" class="welcome">
+        <div class="eyebrow"><span class="dot"></span> YOUR WORKBENCH, READY WHEN YOU ARE</div>
+        <h1>What are we<br>working on?</h1>
+        <p>Find the right component. Build a circuit.<br>Make room for the next layout.</p>
+        <div class="starters">
+          <button data-prompt="Compare current offers for 10 genuine NE555P timers delivered to Portugal. Show EUR prices, stock, VAT and shipping when available, with source links."><span class="starter-icon">⌕</span><strong>Find a component</strong><span>Compare prices and availability</span><b>↗</b></button>
+          <button data-prompt="Help me design a PCB in KiCad using Konnect. Ask me for the circuit requirements and board constraints first."><span class="starter-icon">▦</span><strong>Design a PCB</strong><span>From a circuit idea to KiCad files</span><b>↗</b></button>
+          <button data-prompt="Help me design an XTrackCAD layout using Turnout and Märklin C-track. Ask for my available space and layout requirements first."><span class="starter-icon">⌘</span><strong>Plan a railway</strong><span>Explore a layout with Turnout</span><b>↗</b></button>
+        </div>
+      </section>
+      <section id="messages" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></section>
+    </div>
+    <div class="composer-area">
+      <div id="attachments"></div>
+      <form id="composer">
+        <label class="sr-only" for="message">Message</label>
+        <textarea id="message" rows="2" maxlength="30000" placeholder="Describe what you want to make or find…" required></textarea>
+        <div class="composer-bottom">
+          <button id="attach" type="button" class="attach" title="Import working copies of design files">＋ <span>Attach files</span></button>
+          <input type="file" id="upload" multiple hidden>
+          <div class="run-controls"><span id="status"><span class="dot"></span> Ready</span><button id="stop" type="button" hidden>Stop</button><button id="send" type="submit" aria-label="Send message">↑</button></div>
+        </div>
+      </form>
+      <div class="composer-note">Tools and skills run automatically. <span>Web research uses OpenAI, including with Ollama.</span></div>
+    </div>
+  </main>
+</body>
+</html>

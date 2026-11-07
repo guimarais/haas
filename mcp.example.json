@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "konnect": {
+      "command": "/absolute/path/to/konnect",
+      "args": ["--config", "${DATA}/konnect.json"],
+      "cwd": "${WORKSPACE}",
+      "exposure": "deferred",
+      "description": "KiCad schematic and PCB design, checking and exports. Discover toolsets with list_toolboxes and load_toolset.",
+      "toolExposure": {
+        "list_toolboxes": "direct",
+        "load_toolset": "direct",
+        "load_user_config": "hidden",
+        "save_user_config": "hidden",
+        "save_project": "hidden",
+        "mutate_editor_selection": "hidden",
+        "set_active_layer": "hidden",
+        "reload_server": "hidden",
+        "open_schematic_viewer": "hidden"
+      }
+    },
+    "turnout": {
+      "command": "/absolute/path/to/turnout/.venv/bin/python",
+      "args": ["${APP}/scripts/run_turnout.py"],
+      "cwd": "${WORKSPACE}",
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/turnout/src",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "exposure": "deferred",
+      "toolExposure": { "list_parts": "direct" },
+      "description": "XTrackCAD layouts through Turnout MCP."
+    }
+  }
+}

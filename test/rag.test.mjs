@@ -10,6 +10,7 @@ import { documentConversation, documentPrivacy, documentTools } from '../rag-too
 import { closeChat, createChat, selectModel } from '../agent.mjs';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { startServer } from '../server.mjs';
+import { runEvaluation } from '../scripts/eval-rag.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'haas-rag-'));
@@ -229,6 +230,185 @@ test('frontend ingestion streams progress, persists uploads and rebuilds local-o
   assert.match(page, /id="document-form"/);
 });
 
+test('frontend edits preserve IDs, re-ingest title/source changes and remove every theme without deleting originals', async t => {
+  const { root, options, config, rag, url } = await fixture(t);
+  const originalText = '# Reference\n\nNE555 resistors limit current.';
+  const { id } = await rag.ingest({ name: 'reference.md', title: 'Original reference', themes: ['electronics', 'reference'] }, { bytes: Buffer.from(originalText) });
+  const original = await rag.original(id);
+  const sourceFile = path.resolve(root, (await rag.list())[0].source.path);
+  const app = await startServer({ port: 0, dataDir: options.dataDir, workspace: path.join(root, 'workspace'), chatOptions: { extensions: [] }, ragOptions: options });
+  t.after(() => app.close());
+  const post = (endpoint, value) => fetch(`${app.url}/api/documents/${endpoint}`, { method: 'POST',
+    headers: { 'X-Haas-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+  const edit = async value => {
+    const response = await post('update', { id, ...value });
+    assert.equal(response.status, 200);
+    return (await response.text()).trim().split('\n').map(line => JSON.parse(line)).at(-1);
+  };
+  let calls = config.embedCalls;
+  config.embeddings = false;
+  const metadata = await edit({ title: 'Original reference', url: '', themes: ['components'] });
+  assert.equal(metadata.metadataOnly, true);
+  assert.equal(config.embedCalls, calls);
+  assert.equal((await rag.search('NE555', { themes: ['components'], mode: 'bm25' })).results[0].documentId, id);
+  assert.equal((await rag.search('NE555', { themes: ['reference'], mode: 'bm25' })).results.length, 0);
+
+  config.embeddings = true;
+  const renamed = await edit({ title: 'Renamed reference', url: '', themes: ['components'] });
+  assert.equal(renamed.type, 'done'); assert.equal(renamed.skipped, false);
+  assert.ok(config.embedCalls > calls);
+  assert.equal((await rag.search('Renamed', { mode: 'bm25' })).results[0].documentId, id);
+  config.sources.set('/replacement.md', { text: '# Replacement\n\nReplacement voltage specification.' });
+  assert.equal((await edit({ title: 'Renamed reference', url: `${url}/replacement.md`, themes: ['components'] })).type, 'done');
+  assert.match((await rag.search('Replacement', { mode: 'bm25' })).results[0].text, /Replacement voltage/);
+  assert.equal((await edit({ title: 'Renamed reference', url: '', themes: ['components'] })).type, 'done');
+  assert.equal((await rag.list())[0].source.url, undefined, 'Clearing a URL must restore use of the registered local source.');
+  assert.match((await rag.search('NE555', { mode: 'bm25' })).results[0].text, /NE555 resistors/);
+
+  const indexedHash = (await rag.state()).documents[id].catalogueHash;
+  config.embeddings = false;
+  const failed = await edit({ title: 'Pending title', url: '', themes: ['components'] });
+  assert.equal(failed.type, 'error'); assert.equal(failed.catalogueSaved, true); assert.equal(failed.documentStatus, 'stale');
+  assert.equal((await rag.list())[0].title, 'Pending title');
+  assert.equal((await rag.search('NE555', { mode: 'bm25' })).results[0].stale, true);
+  calls = config.embedCalls;
+  assert.equal((await edit({ title: 'Pending title', url: '', themes: ['railway', 'components'] })).metadataOnly, true);
+  assert.equal(config.embedCalls, calls);
+  assert.equal((await rag.state()).documents[id].catalogueHash, indexedHash, 'Theme edits must not conceal a title update awaiting indexing.');
+  config.embeddings = true;
+  assert.equal((await rag.ingest({ id })).skipped, false);
+  assert.ok(config.embedCalls > calls);
+  assert.equal((await rag.list()).length, 1);
+
+  const retained = await rag.original(id);
+  assert.equal((await post('remove', { id })).status, 200);
+  assert.equal((await rag.list()).length, 0);
+  assert.equal((await rag.search('NE555', { mode: 'bm25' })).results.length, 0);
+  for (const file of [original, sourceFile, retained]) assert.equal(await readFile(file, 'utf8'), originalText);
+  assert.equal((await fetch(`${app.url}/documents/${id}/download`)).status, 404);
+});
+
+test('frontend management validates edits, prevents unregistered filesystem access and requires local request headers', async t => {
+  const { root, options, config, rag, url } = await fixture(t);
+  config.sources.set('/web.md', { text: '# Web reference\n\nNE555 current specification.' });
+  const { id } = await rag.ingest({ url: `${url}/web.md`, title: 'Web reference', themes: ['electronics'] });
+  const app = await startServer({ port: 0, dataDir: options.dataDir, workspace: path.join(root, 'workspace'), chatOptions: { extensions: [] }, ragOptions: options });
+  t.after(() => app.close());
+  const baseline = await readFile(options.manifest, 'utf8');
+  const valid = { id, title: 'Web reference', url: `${url}/web.md`, themes: ['electronics'] };
+  for (const change of [{ title: ' ' }, { url: '' }, { url: 'file:///unregistered.md' }, { themes: [] }, { id: 'missing' }]) {
+    const response = await fetch(`${app.url}/api/documents/update`, { method: 'POST', headers: { 'X-Haas-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...valid, ...change }) });
+    assert.equal((await response.text()).trim().split('\n').map(line => JSON.parse(line)).at(-1).type, 'error');
+    assert.equal(await readFile(options.manifest, 'utf8'), baseline);
+  }
+  const attempt = await fetch(`${app.url}/api/documents/update`, { method: 'POST', headers: { 'X-Haas-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...valid, path: '/unregistered.md' }) });
+  assert.equal((await attempt.text()).trim().split('\n').map(line => JSON.parse(line)).at(-1).unchanged, true);
+  assert.equal((await rag.list())[0].source.path, undefined);
+  assert.equal((await fetch(`${app.url}/api/documents/remove`, { method: 'POST', body: JSON.stringify({ id }) })).status, 403);
+  assert.equal((await fetch(`${app.url}/api/documents/update`, { method: 'POST', headers: { 'X-Haas-Request': '1', Origin: 'https://other.example' }, body: JSON.stringify(valid) })).status, 403);
+  assert.equal((await rag.list()).length, 1);
+});
+
+test('frontend retry recovers failed and stale documents using their existing IDs and current catalogue sources', async t => {
+  const { root, options, config, rag, url } = await fixture(t);
+  const initialUrl = `${url}/missing.md`;
+  await assert.rejects(rag.ingest({ url: initialUrl, title: 'Recovery reference', themes: ['electronics'] }), /HTTP 404/);
+  const failed = (await rag.list())[0];
+  assert.equal(failed.status.status, 'failed');
+  const app = await startServer({ port: 0, dataDir: options.dataDir, workspace: path.join(root, 'workspace'), chatOptions: { extensions: [] }, ragOptions: options });
+  t.after(() => app.close());
+  const retry = async value => {
+    const response = await fetch(`${app.url}/api/documents/retry`, { method: 'POST', headers: { 'X-Haas-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+    assert.equal(response.status, 200);
+    return (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+  };
+  config.sources.set('/missing.md', { text: '# Reference\n\nNE555 initial current specification.' });
+  const first = await retry({ id: failed.id });
+  assert.ok(first.some(event => event.stage === 'embedding'));
+  assert.equal(first.at(-1).type, 'done');
+  assert.equal(first.at(-1).id, failed.id);
+  assert.equal((await rag.list())[0].status.status, 'ready');
+  const retained = await rag.original(failed.id);
+  await assert.rejects(rag.update(failed.id, { title: 'Updated recovery reference', url: `${url}/revised.md`, themes: ['reference', 'electronics'] }), /HTTP 404/);
+  const unavailable = await retry({ id: failed.id });
+  assert.equal(unavailable.at(-1).type, 'error');
+  assert.equal(unavailable.at(-1).documentStatus, 'stale');
+  assert.match((await rag.search('NE555', { mode: 'bm25' })).results[0].text, /initial/);
+  assert.equal((await rag.search('NE555', { mode: 'bm25' })).results[0].stale, true);
+  config.sources.set('/revised.md', { text: '# Revised\n\nNE556 revised current specification.' });
+  const recovered = await retry({ id: failed.id, url: initialUrl, title: 'Ignored old draft', themes: ['ignored'], path: '/unregistered.txt' });
+  assert.equal(recovered.at(-1).type, 'done');
+  const documents = await rag.list();
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].id, failed.id);
+  assert.equal(documents[0].title, 'Updated recovery reference');
+  assert.equal(documents[0].source.url, `${url}/revised.md`);
+  assert.equal(documents[0].source.path, undefined);
+  assert.deepEqual(documents[0].themes, ['reference', 'electronics']);
+  assert.equal(documents[0].status.status, 'ready');
+  assert.equal(documents[0].status.error, undefined);
+  assert.equal((await rag.search('NE555', { mode: 'bm25' })).results.length, 0);
+  assert.match((await rag.search('NE556', { mode: 'bm25' })).results[0].text, /revised/);
+  assert.match(await readFile(retained, 'utf8'), /NE555 initial/);
+  assert.match(JSON.stringify((await retry({ id: 'unknown' })).at(-1)), /Document not found/);
+  assert.equal((await rag.list()).length, 1);
+  for (const value of [{}, { id: '../escape' }]) {
+    const response = await fetch(`${app.url}/api/documents/retry`, { method: 'POST', headers: { 'X-Haas-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+    assert.equal(response.status, 400);
+  }
+  assert.equal((await fetch(`${app.url}/api/documents/retry`, { method: 'POST', body: JSON.stringify({ id: failed.id }) })).status, 403);
+});
+
+test('replacement uploads recover missing local sources and retain old indexed content until a retry succeeds', async t => {
+  const { root, options, config, rag } = await fixture(t);
+  const originalText = '# Original\n\nNE555 original reference.';
+  const { id } = await rag.ingest({ name: 'original.md', title: 'Local recovery reference', themes: ['electronics', 'reference'] }, { bytes: Buffer.from(originalText) });
+  const original = await rag.original(id);
+  await rm(path.resolve(root, (await rag.list())[0].source.path));
+  const app = await startServer({ port: 0, dataDir: options.dataDir, workspace: path.join(root, 'workspace'), chatOptions: { extensions: [] }, ragOptions: options });
+  t.after(() => app.close());
+  const request = async (file, bytes) => {
+    const params = file ? `?${new URLSearchParams({ id, name: file, title: 'Ignored filename title', themes: '["ignored"]' })}` : '';
+    const response = await fetch(`${app.url}/api/documents/retry${params}`, { method: 'POST',
+      headers: { 'X-Haas-Request': '1', 'Content-Type': file ? 'application/octet-stream' : 'application/json' }, body: file ? bytes : JSON.stringify({ id }) });
+    assert.equal(response.status, 200);
+    return (await response.text()).trim().split('\n').map(line => JSON.parse(line)).at(-1);
+  };
+  const missing = await request();
+  assert.equal(missing.type, 'error');
+  assert.match(missing.error, /Restore it or choose a replacement file/);
+  assert.equal((await rag.list())[0].status.status, 'stale');
+  const replacement = '# Recovered\n\nNE556 replacement reference.';
+  config.embeddings = false;
+  const failedReplacement = await request('recovered.md', replacement);
+  assert.equal(failedReplacement.type, 'error');
+  assert.equal(failedReplacement.documentStatus, 'stale');
+  const pending = (await rag.list())[0];
+  assert.equal(pending.id, id);
+  assert.equal(pending.title, 'Local recovery reference');
+  assert.deepEqual(pending.themes, ['electronics', 'reference']);
+  assert.match(pending.source.path, /recovered\.md$/);
+  assert.equal(await readFile(path.resolve(root, pending.source.path), 'utf8'), replacement);
+  assert.equal(await readFile(await rag.original(id), 'utf8'), originalText);
+  assert.match((await rag.search('NE555', { mode: 'bm25' })).results[0].text, /original/);
+  config.embeddings = true;
+  assert.equal((await request()).type, 'done', 'Retry must read the registered replacement without another upload.');
+  const recovered = (await rag.list())[0];
+  assert.equal((await rag.list()).length, 1);
+  assert.equal(recovered.status.status, 'ready');
+  assert.equal(recovered.status.error, undefined);
+  assert.equal(recovered.id, id);
+  assert.equal(recovered.title, pending.title);
+  assert.deepEqual(recovered.themes, pending.themes);
+  assert.equal(await readFile(await rag.original(id), 'utf8'), replacement);
+  assert.equal(await readFile(original, 'utf8'), originalText);
+  assert.equal((await rag.search('NE555', { mode: 'bm25' })).results.length, 0);
+  assert.match((await rag.search('NE556', { mode: 'bm25' })).results[0].text, /replacement/);
+  const manifest = await readFile(options.manifest, 'utf8');
+  assert.equal((await request('empty.md', '')).type, 'error');
+  assert.equal(await readFile(options.manifest, 'utf8'), manifest);
+});
+
 test('one writer spans separate Rag instances and cancellation leaves no partial searchable document', async t => {
   const { rag, options } = await fixture(t);
   let release, entered;
@@ -242,4 +422,47 @@ test('one writer spans separate Rag instances and cancellation leaves no partial
   assert.equal((await rag.search('Never indexed')).results.length, 0);
   const added = await new Rag(options).ingest({ name: 'ready.txt', themes: ['test'] }, { bytes: Buffer.from('Resistor current limit.') });
   assert.equal((await rag.search('Resistor')).results[0].documentId, added.id);
+});
+
+test('explicit retrieval modes keep BM25 offline and never disguise failed semantic search as fallback', async t => {
+  const { rag } = await fixture(t);
+  const doc = await rag.ingest({ name: 'timer.md', themes: ['electronics'] }, { bytes: Buffer.from('# Reset\n\nNE555 RESET stops the timer.') });
+  const semantic = await rag.search('NE555', { mode: 'semantic' });
+  assert.equal(semantic.mode, 'semantic');
+  assert.equal(semantic.results[0].documentId, doc.id);
+  rag.fetch = async () => { throw new Error('Ollama must not be called for BM25.'); };
+  const bm25 = await rag.search('NE555', { mode: 'bm25' });
+  assert.equal(bm25.mode, 'bm25');
+  assert.equal(bm25.results[0].documentId, doc.id);
+  assert.equal(bm25.warning, undefined);
+  await assert.rejects(rag.search('NE555', { mode: 'semantic' }), /Ollama must not be called/);
+  const fallback = await rag.search('NE555');
+  assert.equal(fallback.mode, 'bm25');
+  assert.match(fallback.warning, /Semantic search skipped/);
+  await assert.rejects(rag.search('NE555', { mode: 'unknown' }), /Search mode/);
+});
+
+test('retrieval evaluation runs real isolated indexing and all search modes without requiring an installed model', async t => {
+  const { rag, url, options, config, model } = await fixture(t);
+  await rag.ingest({ name: 'private.md', themes: ['private'] }, { bytes: Buffer.from('Private NE555 design notes.') });
+  const manifestBefore = await readFile(options.manifest, 'utf8');
+  const stateBefore = await readFile(path.join(rag.directory, 'state.json'), 'utf8');
+  const report = await runEvaluation({ ollamaUrl: url, model });
+  assert.equal(report.passed, true, JSON.stringify(report.structuralFailures));
+  assert.equal(report.embedding.dimensions, 8);
+  assert.equal(report.embedding.digest, config.digest);
+  assert.equal(report.queries.length, report.corpus.queries * 3);
+  assert.ok(report.corpus.passages > report.corpus.documents);
+  for (const mode of ['bm25', 'semantic', 'hybrid']) {
+    assert.equal(report.modes[mode].queries, report.corpus.queries);
+    assert.equal(report.modes[mode].structuralFailures, 0);
+    assert.ok(report.modes[mode].unsupported.queries > 0);
+    assert.ok(report.modes[mode].byTag['cross-language']);
+    assert.ok(report.modes[mode].latency.medianMs >= 0);
+  }
+  assert.ok(report.modes.semantic.unsupported.queriesWithResults > 0, 'Unsupported questions must expose the lack of a relevance threshold.');
+  assert.ok(report.queries.some(row => row.metrics?.hitAtK === false), 'Poor synthetic embeddings must be reported as ranking misses, not fail the baseline.');
+  assert.equal(await readFile(options.manifest, 'utf8'), manifestBefore);
+  assert.equal(await readFile(path.join(rag.directory, 'state.json'), 'utf8'), stateBefore);
+  assert.ok(!JSON.stringify(report).includes('Private NE555 design notes'));
 });

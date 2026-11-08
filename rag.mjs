@@ -240,8 +240,14 @@ export class Rag {
       return { bytes: await boundedBytes(response, signal), name: new URL(response.url || doc.source.url).pathname, contentType: response.headers.get('content-type') || '' };
     }
     const file = path.resolve(this.projectDir, doc.source.path);
-    if ((await stat(file)).size > MAX_DOCUMENT_BYTES) throw failure('Document exceeds 25 MiB.');
-    return { bytes: await readFile(file), name: file, contentType: '' };
+    try {
+      if ((await stat(file)).size > MAX_DOCUMENT_BYTES) throw failure('Document exceeds 25 MiB.');
+      return { bytes: await readFile(file), name: file, contentType: '' };
+    } catch (error) {
+      if (error.code === 'ENOENT') throw failure(`Local source file is missing: ${doc.source.path}. Restore it or choose a replacement file.`);
+      if (error.code === 'EACCES') throw failure(`Cannot read local source file: ${doc.source.path}. Check its permissions, or choose a replacement file.`);
+      throw error;
+    }
   }
 
   async ingestDocument(doc, state, { force = false, signal, onProgress = () => {}, bytes, identity } = {}) {
@@ -312,18 +318,47 @@ export class Rag {
       }
       const doc = validateDocument({ id, title: input.title || existing?.title || input.name || (url ? decodeURIComponent(new URL(url).pathname.split('/').pop()) || new URL(url).hostname : path.basename(localPath || '')),
         themes: input.themes || existing?.themes, source: { ...(existing?.source || {}), ...(url ? { url } : {}), ...(localPath ? { path: localPath } : {}) } });
-      if (existing) catalogue.documents[catalogue.documents.indexOf(existing)] = doc;
-      else catalogue.documents.push(doc);
-      await atomicJson(this.manifest, catalogue);
-      try {
-        const result = await this.ingestDocument(doc, state, { bytes, signal, onProgress });
-        await this.saveState(state);
-        return result;
-      } catch (error) {
-        state.documents[id] = { ...state.documents[id], status: state.documents[id]?.indexedAt ? 'stale' : 'failed', error: error.message, checkedAt: now() };
-        await this.saveState(state);
-        throw error;
+      return this.saveDocument(doc, catalogue, state, { bytes, signal, onProgress });
+    });
+  }
+
+  async saveDocument(doc, catalogue, state, options) {
+    const index = catalogue.documents.findIndex(entry => entry.id === doc.id);
+    if (index < 0) catalogue.documents.push(doc);
+    else catalogue.documents[index] = doc;
+    await atomicJson(this.manifest, catalogue);
+    try {
+      const result = await this.ingestDocument(doc, state, options);
+      await this.saveState(state);
+      return result;
+    } catch (error) {
+      const status = state.documents[doc.id]?.indexedAt ? 'stale' : 'failed';
+      state.documents[doc.id] = { ...state.documents[doc.id], status, error: error.message, checkedAt: now() };
+      await this.saveState(state);
+      throw Object.assign(error, { documentId: doc.id, catalogueSaved: true, documentStatus: status });
+    }
+  }
+
+  async update(id, { title, url, themes: names }, options = {}) {
+    return this.write(async () => {
+      const catalogue = await this.catalogue();
+      const existing = catalogue.documents.find(doc => doc.id === id);
+      if (!existing) throw failure('Document not found.', 404);
+      const source = { ...existing.source };
+      if (url !== undefined) {
+        if (typeof url !== 'string') throw failure('Source URL must be text.');
+        if (url.trim()) source.url = sourceUrl(url.trim());
+        else delete source.url;
       }
+      if (!source.url && !source.path) throw failure('This document needs a source URL because it has no local source file.');
+      const doc = validateDocument({ ...existing, title: title ?? existing.title, source, themes: names ?? existing.themes });
+      const state = await this.state();
+      if (doc.title === existing.title && JSON.stringify(doc.source) === JSON.stringify(existing.source)) {
+        if (JSON.stringify(doc.themes) === JSON.stringify(existing.themes)) return { id, metadataOnly: true, unchanged: true };
+        await this.saveThemes(catalogue, state, existing, doc.themes);
+        return { id, metadataOnly: true };
+      }
+      return this.saveDocument(doc, catalogue, state, options);
     });
   }
 
@@ -401,40 +436,47 @@ export class Rag {
       const catalogue = await this.catalogue();
       const doc = catalogue.documents.find(doc => doc.id === id);
       if (!doc) throw failure('Document not found.', 404);
-      doc.themes = themes(names);
       const state = await this.state();
-      const table = await this.table(state.table);
-      try { if (table) await table.update({ where: `document_id = ${sql(id)}`, values: { themes: doc.themes } }); }
-      finally { table?.close(); }
-      await atomicJson(this.manifest, catalogue);
-      if (state.documents[id]) state.documents[id].catalogueHash = hash(JSON.stringify(doc));
-      await this.saveState(state);
+      await this.saveThemes(catalogue, state, doc, names);
       return doc;
     });
   }
 
-  async search(query, { themes: selectedThemes = [], limit = 8, signal, exact = false } = {}) {
+  async saveThemes(catalogue, state, doc, names) {
+    const previousHash = hash(JSON.stringify(doc));
+    doc.themes = themes(names);
+    const table = await this.table(state.table);
+    try { if (table) await table.update({ where: `document_id = ${sql(doc.id)}`, values: { themes: doc.themes } }); }
+    finally { table?.close(); }
+    await atomicJson(this.manifest, catalogue);
+    // A metadata edit must not conceal title/source changes that still need indexing.
+    if (state.documents[doc.id]?.catalogueHash === previousHash) state.documents[doc.id].catalogueHash = hash(JSON.stringify(doc));
+    await this.saveState(state);
+  }
+
+  async search(query, { themes: selectedThemes = [], limit = 8, signal, exact = false, mode = 'hybrid' } = {}) {
     if (typeof query !== 'string' || !query.trim() || query.length > 6000) throw failure('Search queries must contain 1–6000 characters.');
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw failure('Result count must be between 1 and 50.');
     if (!Array.isArray(selectedThemes)) throw failure('Themes must be an array.');
+    if (!['bm25', 'semantic', 'hybrid'].includes(mode)) throw failure('Search mode must be bm25, semantic or hybrid.');
     const selected = selectedThemes.length ? themes(selectedThemes) : [];
     const [{ documents }, state] = await Promise.all([this.catalogue(), this.state()]);
     const eligible = documents.filter(doc => !selected.length || doc.themes.some(theme => selected.includes(theme)));
-    if (!eligible.length) return { mode: 'hybrid', results: [] };
+    if (!eligible.length) return { mode, results: [] };
     const table = await this.table(state.table);
     if (!table) return { mode: 'bm25', warning: 'No indexed documents. Run ingestion or rebuild.', results: [] };
     try {
       const filter = `document_id IN (${eligible.map(doc => sql(doc.id)).join(',')})`;
       const columns = ['chunk_id', 'document_id', 'text', 'page', 'section'];
       let vector, warning;
-      try {
+      if (mode !== 'bm25') try {
         const identity = await this.modelInfo(signal);
         if (JSON.stringify(identity) !== JSON.stringify(state.embedding)) throw failure('Embedding model changed; run rebuild before semantic search.');
         [vector] = await this.embed([query], identity, signal, true);
-      } catch (error) { if (signal?.aborted) throw error; warning = `Semantic search skipped: ${error.message}`; }
+      } catch (error) { if (signal?.aborted || mode === 'semantic') throw error; warning = `Semantic search skipped: ${error.message}`; }
       signal?.throwIfAborted();
       const count = Math.max(40, limit * 5);
-      const keyword = await table.search(query, 'fts', ['search_text']).where(filter).select([...columns, '_score']).limit(count).toArray();
+      const keyword = mode === 'semantic' ? [] : await table.search(query, 'fts', ['search_text']).where(filter).select([...columns, '_score']).limit(count).toArray();
       let semantic = [];
       if (vector) {
         let search = table.vectorSearch(vector).distanceType('cosine').where(filter).select([...columns, '_distance']).limit(count);
@@ -449,7 +491,7 @@ export class Rag {
       });
       const byId = new Map(eligible.map(doc => [doc.id, doc]));
       const semanticRank = new Map(semantic.map((row, rank) => [row.chunk_id, rank]));
-      return { mode: vector ? 'hybrid' : 'bm25', ...(warning ? { warning } : {}),
+      return { mode: vector ? mode : 'bm25', ...(warning ? { warning } : {}),
         results: [...scores.values()].sort((a, b) => b.score - a.score || (semanticRank.get(a.row.chunk_id) ?? Infinity) - (semanticRank.get(b.row.chunk_id) ?? Infinity))
           .slice(0, limit).map(({ row, score }) => {
           const doc = byId.get(row.document_id);

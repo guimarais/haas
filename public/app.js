@@ -331,6 +331,68 @@ $('composer').addEventListener('submit', async event => {
 
 refresh({ history: true }).catch(error => notice(`Could not connect: ${error.message}`));
 
+let editingDocument = null, documentBusy = false;
+const documentUrlHint = $('document-url-help').textContent;
+
+function setDocumentBusy(value) {
+  documentBusy = value;
+  $('document-fields').disabled = value;
+  document.querySelectorAll('[data-document-action]').forEach(button => { button.disabled = value; });
+}
+
+function setDocumentEditor(doc) {
+  editingDocument = doc;
+  $('document-form').reset();
+  $('document-upload-fields').hidden = !!doc;
+  $('document-title-optional').hidden = !!doc;
+  $('document-title').required = !!doc;
+  $('document-url').required = !!doc && !doc.source.path;
+  $('document-form-heading').textContent = doc ? 'Edit document' : 'Add document';
+  $('document-editing-id').hidden = !doc;
+  $('document-editing-id').textContent = doc ? `ID: ${doc.id}` : '';
+  $('document-submit').textContent = doc ? 'Save changes' : 'Add to collection';
+  $('document-cancel').hidden = !doc;
+  $('document-url-help').textContent = doc ? (doc.source.path ? 'Leave the URL blank to use this document’s local source file.' : 'This document needs a source URL.') : documentUrlHint;
+  if (doc) {
+    $('document-title').value = doc.title;
+    $('document-url').value = doc.source.url || '';
+    for (const option of $('document-existing-themes').options) option.selected = doc.themes.includes(option.value);
+  }
+}
+
+async function runDocumentIngestion(endpoint, options, { start, complete, resetEditor = false }) {
+  if (documentBusy) return;
+  setDocumentBusy(true);
+  const progress = $('document-progress');
+  progress.textContent = start;
+  progress.scrollIntoView({ block: 'nearest' });
+  try {
+    const response = await api(endpoint, options);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', finished = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let newline;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const update = JSON.parse(line);
+        if (update.type === 'error') throw new Error(`${update.catalogueSaved ? (update.documentStatus === 'stale' ? 'Catalogue entry saved; the previous indexed version is retained as stale. ' : 'The document is saved in the catalogue but not indexed. ') : ''}${update.error}`);
+        if (update.type === 'done') {
+          finished = true;
+          progress.textContent = update.unchanged ? 'No changes to save.' : update.metadataOnly ? 'Theme memberships updated.' : update.skipped ? 'Already indexed; document is unchanged.' : `${complete}: ${update.chunks} searchable passage${update.chunks === 1 ? '' : 's'}.`;
+          if (resetEditor) setDocumentEditor(null);
+        } else if (update.stage === 'embedding') progress.textContent = `Indexing passages: ${update.completed} of ${update.total}…`;
+        else progress.textContent = ({ reading: 'Reading document…', extracting: 'Extracting text…', saving: 'Saving to your collection…' })[update.stage] || 'Ingesting document…';
+      }
+      if (done) { if (!finished) throw new Error('Connection interrupted. Reopen Documents to check the ingestion result.'); break; }
+    }
+  } catch (error) { progress.textContent = error.message; }
+  finally { setDocumentBusy(false); await refreshDocuments().catch(error => { progress.textContent = error.message; }); }
+}
+
 async function refreshDocuments() {
   const collection = await (await api('/api/documents')).json();
   const selection = new Set([...$('document-existing-themes').selectedOptions].map(option => option.value));
@@ -344,13 +406,81 @@ async function refreshDocuments() {
   for (const doc of collection.documents) {
     const item = document.createElement('li');
     const title = document.createElement('strong'); title.textContent = doc.title;
+    const identifier = document.createElement('p'); identifier.className = 'document-id'; identifier.textContent = `ID: ${doc.id}`;
     const meta = document.createElement('p');
     meta.textContent = `${doc.themes.join(' · ')} — ${doc.status.status}${doc.status.chunks ? ` · ${doc.status.chunks} passage${doc.status.chunks === 1 ? '' : 's'}` : ''}`;
     const source = document.createElement('p');
     source.className = 'small muted';
-    source.textContent = doc.source.url || 'Local upload: keep its original file to rebuild this collection.';
-    item.append(title, meta, source);
+    source.textContent = doc.source.url || `Local source: ${doc.source.path}`;
+    item.append(title, identifier, meta, source);
     if (doc.status.error) { const error = document.createElement('p'); error.className = 'error'; error.textContent = doc.status.error; item.append(error); }
+    const actions = document.createElement('div'); actions.className = 'document-actions';
+    if (['failed', 'stale'].includes(doc.status.status)) {
+      const hint = document.createElement('p'); hint.className = 'small muted';
+      hint.textContent = 'Check the source and local Ollama service, then retry. You can edit an incorrect source URL.';
+      item.append(hint);
+      const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.dataset.documentAction = 'retry';
+      retry.disabled = documentBusy; retry.setAttribute('aria-label', `Retry ${doc.title}`);
+      retry.addEventListener('click', () => runDocumentIngestion('/api/documents/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: doc.id }),
+      }, { start: `Retrying ${doc.title}…`, complete: 'Document retried' }));
+      actions.append(retry);
+      if (doc.source.path) {
+        const replacement = document.createElement('input'); replacement.type = 'file'; replacement.hidden = true;
+        replacement.accept = $('document-file').accept; replacement.dataset.documentAction = 'replacement-input'; replacement.disabled = documentBusy;
+        const replace = document.createElement('button'); replace.type = 'button'; replace.textContent = 'Replace file'; replace.dataset.documentAction = 'replace';
+        replace.disabled = documentBusy; replace.setAttribute('aria-label', `Choose replacement file for ${doc.title}`);
+        replace.addEventListener('click', () => replacement.click());
+        replacement.addEventListener('change', async () => {
+          const file = replacement.files[0];
+          if (!file) return;
+          if (!file.size || file.size > 25 * 1024 * 1024) {
+            $('document-progress').textContent = 'Choose a nonempty replacement file no larger than 25 MiB.';
+            replacement.value = ''; return;
+          }
+          const parameters = new URLSearchParams({ id: doc.id, name: file.name });
+          await runDocumentIngestion(`/api/documents/retry?${parameters}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+            { start: `Uploading replacement for ${doc.title}…`, complete: 'Source file replaced' });
+          replacement.value = '';
+        });
+        const replacementHint = document.createElement('p'); replacementHint.className = 'small muted';
+        replacementHint.textContent = 'If the local source is missing, choose a replacement file. Its ID, title and themes are kept.';
+        if (doc.source.url) replacementHint.textContent += ' The source URL is kept for future rebuilds.';
+        item.append(replacementHint); actions.append(replace, replacement);
+      }
+    }
+    const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Edit'; edit.dataset.documentAction = 'edit';
+    edit.disabled = documentBusy; edit.setAttribute('aria-label', `Edit ${doc.title}`);
+    edit.addEventListener('click', () => {
+      setDocumentEditor(doc); $('document-progress').textContent = '';
+      $('document-form-heading').scrollIntoView({ block: 'start' }); $('document-title').focus();
+    });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.className = 'document-remove';
+    remove.dataset.documentAction = 'remove'; remove.disabled = documentBusy; remove.setAttribute('aria-label', `Remove ${doc.title}`);
+    const removalNote = document.createElement('p'); removalNote.className = 'small muted'; removalNote.hidden = true;
+    removalNote.textContent = 'Remove this document from every theme? Original source files will be kept.';
+    const cancelRemoval = document.createElement('button'); cancelRemoval.type = 'button'; cancelRemoval.textContent = 'Cancel'; cancelRemoval.hidden = true;
+    cancelRemoval.dataset.documentAction = 'cancel-remove'; cancelRemoval.setAttribute('aria-label', `Cancel removal of ${doc.title}`);
+    cancelRemoval.addEventListener('click', () => {
+      cancelRemoval.hidden = true; removalNote.hidden = true;
+      remove.textContent = 'Remove'; remove.setAttribute('aria-label', `Remove ${doc.title}`);
+    });
+    remove.addEventListener('click', async () => {
+      if (cancelRemoval.hidden) {
+        cancelRemoval.hidden = false; removalNote.hidden = false;
+        remove.textContent = 'Confirm removal'; remove.setAttribute('aria-label', `Confirm removal of ${doc.title}`);
+        return;
+      }
+      setDocumentBusy(true);
+      const progress = $('document-progress'); progress.textContent = 'Removing document…';
+      try {
+        await api('/api/documents/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: doc.id }) });
+        if (editingDocument?.id === doc.id) setDocumentEditor(null);
+        progress.textContent = 'Removed from the collection. Source files are kept.';
+      } catch (error) { progress.textContent = error.message; }
+      finally { setDocumentBusy(false); await refreshDocuments().catch(error => { progress.textContent = error.message; }); progress.scrollIntoView({ block: 'nearest' }); }
+    });
+    actions.append(edit, remove, cancelRemoval); item.append(removalNote, actions);
     $('document-list').append(item);
   }
   if (collection.progress) $('document-progress').textContent = `Ingesting ${collection.progress.title || 'a document'}…`;
@@ -361,45 +491,24 @@ $('open-documents').addEventListener('click', () => {
   refreshDocuments().catch(error => { $('document-progress').textContent = error.message; });
 });
 $('close-documents').addEventListener('click', () => $('documents-dialog').close());
+$('document-cancel').addEventListener('click', () => { setDocumentEditor(null); $('document-progress').textContent = ''; });
 $('document-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (documentBusy) return;
+  const editing = editingDocument;
   const file = $('document-file').files[0];
   const url = $('document-url').value.trim();
   const title = $('document-title').value.trim();
   const themes = [...$('document-existing-themes').selectedOptions].map(option => option.value)
     .concat($('document-new-themes').value.split(',').map(value => value.trim()).filter(Boolean));
   const progress = $('document-progress');
-  if ((!file && !url) || !themes.length) { progress.textContent = 'Choose a file or URL, and at least one theme.'; return; }
+  if ((!editing && !file && !url) || !themes.length) { progress.textContent = 'Choose a source and at least one theme.'; return; }
+  if (editing && !title) { progress.textContent = 'Enter a document title.'; return; }
   if (file?.size > 25 * 1024 * 1024) { progress.textContent = 'Documents must be no larger than 25 MiB.'; return; }
-  $('document-fields').disabled = true;
-  progress.textContent = file ? 'Uploading document…' : 'Downloading document…';
-  progress.scrollIntoView({ block: 'nearest' });
-  try {
-    const parameters = new URLSearchParams({ title, url, themes: JSON.stringify(themes), ...(file ? { name: file.name } : {}) });
-    const response = await api(`/api/documents/ingest${file ? `?${parameters}` : ''}`, {
-      method: 'POST', headers: { 'Content-Type': file ? 'application/octet-stream' : 'application/json' },
-      body: file || JSON.stringify({ title, url, themes }),
-    });
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '', finished = false;
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      let newline;
-      while ((newline = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        const update = JSON.parse(line);
-        if (update.type === 'error') throw new Error(update.error);
-        if (update.type === 'done') {
-          finished = true; progress.textContent = update.skipped ? 'Already indexed; document is unchanged.' : `Added to collection: ${update.chunks} searchable passage${update.chunks === 1 ? '' : 's'}.`;
-          $('document-file').value = ''; $('document-url').value = ''; $('document-title').value = '';
-        } else if (update.stage === 'embedding') progress.textContent = `Indexing passages: ${update.completed} of ${update.total}…`;
-        else progress.textContent = ({ reading: 'Reading document…', extracting: 'Extracting text…', saving: 'Saving to your collection…' })[update.stage] || 'Ingesting document…';
-      }
-      if (done) { if (!finished) throw new Error('Connection interrupted. Reopen Documents to check the ingestion result.'); break; }
-    }
-  } catch (error) { progress.textContent = error.message; }
-  finally { $('document-fields').disabled = false; await refreshDocuments().catch(error => { progress.textContent = error.message; }); }
+  const parameters = new URLSearchParams({ title, url, themes: JSON.stringify(themes), ...(file ? { name: file.name } : {}) });
+  await runDocumentIngestion(editing ? '/api/documents/update' : `/api/documents/ingest${file ? `?${parameters}` : ''}`, {
+    method: 'POST', headers: { 'Content-Type': !editing && file ? 'application/octet-stream' : 'application/json' },
+    body: editing ? JSON.stringify({ id: editing.id, title, url, themes }) : file || JSON.stringify({ title, url, themes }),
+  }, { start: editing ? 'Saving document…' : file ? 'Uploading document…' : 'Downloading document…',
+    complete: editing ? 'Document updated' : 'Added to collection', resetEditor: true });
 });

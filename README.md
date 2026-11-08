@@ -53,6 +53,8 @@ Storage lives in `data/chats/<id>/` and `data/projects/<id>/`, each containing `
 
 ## Local document collection
 
+See the [RAG capability checklist](RAG_TODO.md) for implemented features and proposed follow-up work.
+
 The collection uses **LanceDB Embedded** on local disk, **BM25** full-text search, and local Ollama embeddings. It needs no database service or cloud embedding API. Install the embedding model if necessary:
 
 ```sh
@@ -60,6 +62,10 @@ ollama pull qwen3-embedding:0.6b
 ```
 
 Open **Documents** beside **Attach files** to ingest one file or URL. Supported formats are text PDFs, HTML, Markdown and UTF-8 plain text, up to 25 MiB each. Choose existing themes or enter new comma-separated themes; a document can belong to several. Uploaded files may include an optional download URL for recovery. Progress and failures appear in the panel, alongside the collection's ingestion status. Ingestion runs independently of chat, with a shared writer lock across the frontend, chat and CLI.
+
+Each collection entry shows its document ID. Use **Edit** to change the title, source URL or theme memberships while preserving that ID. Title and URL changes immediately re-ingest the document; theme-only changes work without generating embeddings. For documents with a local source file, clearing the URL restores use of that file. Web-only documents require a URL. Local filesystem paths are read-only in the editor. If re-ingestion fails, the edited catalogue entry is saved and the previous indexed version remains available as stale. **Remove** asks for inline confirmation, then removes the document from the catalogue and every searchable theme while keeping original source files.
+
+Failed and stale entries offer **Retry**, which refreshes the current catalogue source under the same document ID. Entries with a local source also offer **Replace file**: select a supported file to store a replacement source while keeping the document's title and themes. An existing source URL is retained for future rebuilds; use Edit to clear it if the local file should become the sole source. Missing-file errors explain how to restore or replace the source. A failed retry or replacement keeps the previous indexed version available; once the source and Ollama are working, Retry can finish indexing a previously uploaded replacement without uploading it again.
 
 Select a **local, tool-capable Ollama conversation model** and ask, for example:
 
@@ -126,6 +132,20 @@ npm run rag -- optimize
 Use `npm run bench:rag` for a disposable, offline 100,000-vector benchmark. It creates seeded synthetic 1,024-dimensional vectors with passage text, measures exact and BM25 queries, and removes its temporary database. On this machine (Node 24.14, Linux x64, LanceDB 0.41.0), the initial run measured **211 ms median / 252 ms p95 exact vector search**, and **2.4 ms median / 10.2 ms p95 BM25**, across 12 queries. These measure database work, excluding embedding generation, and do not establish relevance or latency for a real corpus.
 
 If corpus measurements justify approximate search, create a persistent cosine **IVF_HNSW_SQ** index with `npm run rag -- optimize --ann`. Re-run that command after major corpus changes to retrain it. `npm run bench:rag -- --ann` compares approximate latency and recall against exact search; `rag search --exact` bypasses an existing vector index. The initial design target is approximately 1,000 documents / 100,000 passages. See [LanceDB indexing](https://docs.lancedb.com/indexing/vector-index) and [BM25](https://docs.lancedb.com/search/full-text-search).
+
+### Retrieval quality evaluation
+
+```sh
+npm run eval:rag -- --output data/rag-evaluation/baseline.json
+```
+
+This opt-in command requires the configured local Ollama embedding model. It ingests the bundled, original [evaluation corpus](test/fixtures/rag/corpus.json) into a disposable database, compares BM25, semantic and hybrid search, and removes the temporary collection afterward. It does not read or modify your document catalogue or index. The corpus contains 18 short documents and 38 questions covering exact part numbers, paraphrases, English/Portuguese queries, theme filtering, multiple sources and unsupported questions.
+
+The report includes passage hit rate, document/passage recall and mean reciprocal rank at eight results (configurable with `--limit`), per-category results, per-question rankings, and median/p95 query latency. Latency includes query embedding and model inspection; indexing time is separate. It records the corpus hash, embedding model digest and runtime versions. `--output` saves the full report and prints a summary; omit it to print the full JSON report.
+
+Ranking misses establish a baseline and do not fail the command. Broken fixtures, incorrect theme filtering, invalid source references, unavailable embeddings or an unexpected retrieval fallback do fail it. Unsupported questions are reported separately: nearest-neighbour retrieval currently returns passages even when the corpus cannot answer a question. No relevance threshold or answer-generation change is introduced by this evaluation. Results on this small authored corpus do not establish quality on real manuals or datasheets.
+
+`npm test` validates the evaluator, scoring and retrieval modes with deterministic local fixtures and a scripted embedding service; it needs no installed Ollama model.
 
 ## MCP connections
 

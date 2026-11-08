@@ -117,7 +117,7 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
       if (request.method === 'GET' && url.pathname === '/api/documents') {
         return json(response, { documents: await rag.list(), progress: documentProgress, embeddingModel: rag.model });
       }
-      if (request.method === 'POST' && url.pathname === '/api/documents/ingest') {
+      if (request.method === 'POST' && ['/api/documents/ingest', '/api/documents/update', '/api/documents/retry'].includes(url.pathname)) {
         if (documentController) return json(response, { error: 'A document is already being ingested. Wait for it to finish.' }, 409);
         const controller = new AbortController();
         documentController = controller;
@@ -125,28 +125,50 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
         documentTask = new Promise(resolve => { finish = resolve; });
         try {
           let input, bytes;
+          const editing = url.pathname === '/api/documents/update';
+          const retrying = url.pathname === '/api/documents/retry';
+          if (editing && !(request.headers['content-type'] || '').startsWith('application/json')) throw new Error('Document edits require JSON.');
           if ((request.headers['content-type'] || '').startsWith('application/json')) {
             const value = JSON.parse(await body(request));
-            if (!value.url) throw new Error('Supply a document URL or upload a file.');
-            input = { url: value.url, title: value.title, themes: value.themes };
+            if (retrying) {
+              if (typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(value.id)) throw new Error('Supply a valid document ID to retry.');
+              input = { id: value.id };
+            } else if (editing) {
+              if (typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(value.id) || typeof value.title !== 'string' || typeof value.url !== 'string' || !Array.isArray(value.themes)) throw new Error('Supply a document ID, title, source URL and theme list.');
+              input = { id: value.id, url: value.url, title: value.title, themes: value.themes };
+            } else {
+              if (!value.url) throw new Error('Supply a document URL or upload a file.');
+              input = { url: value.url, title: value.title, themes: value.themes };
+            }
           } else {
-            input = { name: url.searchParams.get('name'), title: url.searchParams.get('title'), url: url.searchParams.get('url') || undefined,
+            if (retrying) {
+              const id = url.searchParams.get('id');
+              if (!id || !/^[a-zA-Z0-9_-]{1,80}$/.test(id)) throw new Error('Supply a valid document ID for the replacement file.');
+              input = { id, name: url.searchParams.get('name') };
+            } else input = { name: url.searchParams.get('name'), title: url.searchParams.get('title'), url: url.searchParams.get('url') || undefined,
               themes: JSON.parse(url.searchParams.get('themes') || '[]') };
             if (!input.name || /[\\/\x00-\x1f]/.test(input.name)) throw new Error('Supply a valid upload filename.');
             bytes = await body(request, MAX_DOCUMENT_BYTES);
           }
           response.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Accel-Buffering': 'no' });
           const send = value => { if (!response.destroyed) response.write(`${JSON.stringify(value)}\n`); };
-          const result = await rag.ingest(input, { bytes, signal: controller.signal, onProgress: progress => {
+          const options = { bytes, signal: controller.signal, onProgress: progress => {
             documentProgress = progress; send({ type: 'progress', ...progress });
-          } });
+          } };
+          const result = editing ? await rag.update(input.id, input, options) : await rag.ingest(input, options);
           send({ type: 'done', ...result });
           response.end();
         } catch (error) {
-          if (response.headersSent) { if (!response.destroyed) response.end(`${JSON.stringify({ type: 'error', error: cleanError(error) })}\n`); }
+          if (response.headersSent) { if (!response.destroyed) response.end(`${JSON.stringify({ type: 'error', error: cleanError(error), catalogueSaved: error.catalogueSaved, documentStatus: error.documentStatus })}\n`); }
           else json(response, { error: cleanError(error) }, error.status || 400);
         } finally { documentProgress = undefined; documentController = undefined; finish(); documentTask = undefined; }
         return;
+      }
+      if (request.method === 'POST' && url.pathname === '/api/documents/remove') {
+        if (documentController) return json(response, { error: 'Wait for document ingestion to finish before removing a document.' }, 409);
+        const { id } = JSON.parse(await body(request));
+        if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(id)) throw new Error('Supply a valid document ID.');
+        return json(response, await rag.remove(id));
       }
       if (request.method === 'GET' && /^\/documents\/[a-zA-Z0-9_-]+\/download$/.test(url.pathname)) {
         const file = await rag.original(url.pathname.split('/')[2]);

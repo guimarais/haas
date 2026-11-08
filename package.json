@@ -11,6 +11,7 @@
     "test": "node --test test/*.test.mjs",
     "rag": "node --env-file-if-exists=.env scripts/rag.mjs",
     "bench:rag": "node scripts/benchmark-rag.mjs",
+    "eval:rag": "node --env-file-if-exists=.env scripts/eval-rag.mjs",
     "check:mcp": "node scripts/check-mcp.mjs"
   },
   "dependencies": {

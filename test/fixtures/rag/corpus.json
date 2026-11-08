@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "provenance": "Original mini-documents authored for Haas retrieval evaluation. No downloaded manuals or private document excerpts.",
+  "license": "GPL-3.0-only",
+  "documents": [
+    {
+      "id": "ne555", "title": "NE555 timer notes", "themes": ["electronics", "components"],
+      "text": "# Timing modes\n\nThe NE555 timer can generate a single pulse in monostable operation. Astable operation produces a repeating waveform. The timing network uses resistors and a capacitor.\n\n# Reset input\n\nThe RESET input overrides timing activity. Pulling RESET low stops the NE555 output. Keep this input at a defined level when reset control is not needed."
+    },
+    {
+      "id": "ne556", "title": "NE556 dual timer notes", "themes": ["electronics", "components"],
+      "text": "# Two timers\n\nThe NE556 contains two timing circuits in one package. Each timer has its own timing connections. It is useful when a design needs two timing functions rather than one NE555 timer.\n\n# Shared supply\n\nThe two NE556 timers share power connections. Supply decoupling helps prevent switching activity in one timing circuit from disturbing the other."
+    },
+    {
+      "id": "resistors", "title": "Resistor fundamentals", "themes": ["electronics", "components"],
+      "text": "# Resistance\n\nA resistor opposes the flow of electric current. Resistance is measured in ohms. Ohm's law relates the voltage across a resistor to its resistance and the current through it.\n\n# Colour bands\n\nColour bands on an axial resistor encode its resistance and tolerance. Read the band sequence in the correct direction. A multimeter can check the resistance when the part marking is unclear."
+    },
+    {
+      "id": "capacitors", "title": "Capacitor fundamentals", "themes": ["electronics", "components"],
+      "text": "# Charge storage\n\nA capacitor stores energy in an electric field between conductors. Capacitance is measured in farads. A polarised capacitor must be connected with the correct polarity.\n\n# Supply decoupling\n\nA decoupling capacitor supplies brief local current demands and reduces disturbances on a power rail. It belongs near the circuit it supports, with a short connection to the supply and return."
+    },
+    {
+      "id": "diodes", "title": "Diodes and inductive loads", "themes": ["electronics", "components"],
+      "text": "# Direction of conduction\n\nA diode conducts primarily in one direction. Its terminals are the anode and cathode. A stripe commonly identifies the cathode on an axial diode package.\n\n# Flyback protection\n\nInterrupting current through a relay coil can produce a voltage spike. A flyback diode across a DC coil provides a path for the stored inductive current when the driver switches off."
+    },
+    {
+      "id": "leds", "title": "LED connection notes", "themes": ["electronics", "components"],
+      "text": "# Current limiting\n\nAn LED needs a controlled forward current. A series resistor is a simple way to limit current from a voltage supply. Connecting the light-emitting diode directly to an unsuitable voltage source can damage it.\n\n# Polarity\n\nAn LED has an anode and cathode. Check its package markings or datasheet before assembly. Reversing the LED can prevent illumination."
+    },
+    {
+      "id": "switches", "title": "Push-button inputs", "themes": ["electronics"],
+      "text": "# Contact bounce\n\nMechanical switch contacts can open and close repeatedly during one press. This contact bounce can make a digital input report several transitions for a single button action.\n\n# Debouncing\n\nSoftware debouncing accepts a new button state only after it remains stable for an interval. Hardware filtering and a Schmitt-trigger input are other ways to obtain a clean transition."
+    },
+    {
+      "id": "pcb", "title": "PCB power and return paths", "themes": ["electronics", "pcb"],
+      "text": "# Return paths\n\nCurrent must return to its source. A long, narrow shared return path can couple switching noise into sensitive circuitry. Place components and route connections to keep important current loops short.\n\n# Local capacitors\n\nPlace a supply decoupling capacitor close to an integrated circuit. Short supply and return connections reduce the loop area. A distant capacitor can be less effective at supporting fast local current changes."
+    },
+    {
+      "id": "soldering", "title": "Soldering inspection", "themes": ["electronics", "pcb"],
+      "text": "# Solder bridges\n\nExcess solder can join neighbouring pads that should remain separate. Inspect fine-pitch leads for unintended bridges. Continuity checks help confirm whether adjacent electrical nets have become connected.\n\n# Rework\n\nFlux and solder wick can help remove excess solder. Reinspect the pads and connections after rework. Repeated heating can damage pads or nearby components."
+    },
+    {
+      "id": "curves", "title": "Railway curve planning", "themes": ["railway", "track"],
+      "text": "# Curve radius\n\nA curve that is too tight for a locomotive or carriage can cause derailments or coupling problems. Choose a radius compatible with the rolling stock. Test the longest vehicles on the tightest planned bend.\n\n# Transitions\n\nA transition introduces curvature gradually between a straight and a curve. Avoid abrupt reverse bends with long vehicles. A short straight between opposing curves can reduce coupling stress."
+    },
+    {
+      "id": "turnouts", "title": "Turnout operation", "themes": ["railway", "track"],
+      "text": "# Route selection\n\nA turnout directs a train onto one of two routes. Its position determines which branch is connected to the approaching track. Check the selected route before sending a train through the junction.\n\n# Point rails\n\nThe movable point rails must close correctly against the stock rails. Dirt or mechanical obstruction can prevent full closure and cause a wheel to take the wrong path."
+    },
+    {
+      "id": "gauge", "title": "Track gauge and model scale", "themes": ["railway", "track"],
+      "text": "# Gauge\n\nTrack gauge is the distance between the inner faces of the two running rails. Wheelsets and track must use compatible geometry. Incorrect gauge can cause poor running or derailments.\n\n# Scale\n\nModel scale describes the ratio between a model and the full-size object. Scale and track gauge describe different measurements. Two models can use the same track gauge while representing different prototype scales."
+    },
+    {
+      "id": "dcc", "title": "DCC locomotive control", "themes": ["railway", "electronics"],
+      "text": "# Addresses\n\nDigital Command Control sends commands through the track. A locomotive decoder responds to its configured address, allowing independently addressed locomotives to share a powered track.\n\n# Decoder\n\nA decoder interprets digital commands and controls outputs such as the motor and lights. Check compatibility between the decoder, locomotive motor and installation space before fitting it."
+    },
+    {
+      "id": "occupancy", "title": "Railway occupancy detection", "themes": ["railway", "electronics"],
+      "text": "# Current sensing\n\nA current-sensing detector reports a track section as occupied when rolling stock draws current from that section. An unlit wagon without a detectable electrical load may not trigger this kind of detector.\n\n# Optical sensing\n\nAn optical detector can detect a train when it interrupts a beam of light. Sensor placement and ambient light affect detection. This method does not require the vehicle to draw track power."
+    },
+    {
+      "id": "signals", "title": "Signals and route protection", "themes": ["railway"],
+      "text": "# Block protection\n\nA block signal indicates whether a train may enter the next protected section. Occupancy detection can inform the signal state. An occupied block should not be presented as clear for another train.\n\n# Interlocking\n\nInterlocking prevents conflicting routes from being set simultaneously. It coordinates turnout positions and signals so that incompatible train movements are not authorised together."
+    },
+    {
+      "id": "clearances", "title": "Rolling-stock clearances", "themes": ["railway", "track"],
+      "text": "# Swept envelope\n\nA long carriage overhangs the track centreline on a curve. Check its swept envelope beside platforms, tunnel walls and neighbouring tracks. Static measurements on a straight track do not capture this movement.\n\n# Bridges\n\nCheck both height and width beneath a bridge. Account for the tallest vehicles and any overhead equipment. Verify clearance on the actual track alignment rather than using the bridge opening alone."
+    },
+    {
+      "id": "via-c", "title": "Notas sobre via C", "themes": ["railway", "track"],
+      "text": "# Balastro integrado\n\nA via C tem uma base que representa o balastro e suporta os carris. O leito integrado facilita a montagem de um traçado temporário sobre uma superfície plana.\n\n# Uniões\n\nAs uniões entre peças devem ficar bem encaixadas. Uma ligação mecânica incompleta pode deixar os carris desalinhados ou provocar mau contacto eléctrico."
+    },
+    {
+      "id": "limpeza", "title": "Limpeza de rodas e carris", "themes": ["railway", "maintenance"],
+      "text": "# Rodas\n\nGordura e sujidade nas rodas prejudicam a captação de corrente da locomotiva. Limpar as superfícies de contacto ajuda a evitar paragens intermitentes. Use um método compatível com os materiais do veículo.\n\n# Carris\n\nUma camada de sujidade ou oxidação nos carris pode interromper o contacto eléctrico. Inspeccione e limpe a superfície de rolamento. Evite produtos que deixem resíduos isolantes."
+    }
+  ],
+  "queries": [
+    { "id": "ne555-reset", "text": "NE555 RESET input", "tags": ["exact-part", "english"], "relevant": [{ "documentId": "ne555", "section": "Reset input", "anchor": "Pulling RESET low stops" }] },
+    { "id": "ne556-dual", "text": "NE556 two timing circuits", "tags": ["exact-part", "english"], "relevant": [{ "documentId": "ne556", "section": "Two timers", "anchor": "two timing circuits in one package" }] },
+    { "id": "single-pulse", "text": "Which timer mode creates one pulse instead of continuously oscillating?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "ne555", "section": "Timing modes", "anchor": "single pulse in monostable" }] },
+    { "id": "resistance-pt", "text": "Que componente se opõe à passagem de corrente eléctrica e é medido em ohms?", "tags": ["cross-language", "portuguese"], "relevant": [{ "documentId": "resistors", "section": "Resistance", "anchor": "opposes the flow of electric current" }] },
+    { "id": "colour-bands", "text": "How can I read the resistance and tolerance of a part with coloured rings?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "resistors", "section": "Colour bands", "anchor": "encode its resistance and tolerance" }] },
+    { "id": "energy-storage", "text": "Which component holds energy in an electric field and has a value in farads?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "capacitors", "section": "Charge storage", "anchor": "stores energy in an electric field" }] },
+    { "id": "coil-spike", "text": "How can I suppress the voltage kick when switching off a DC relay coil?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "diodes", "section": "Flyback protection", "anchor": "provides a path for the stored inductive current" }] },
+    { "id": "led-current", "text": "Why does a light emitting diode need a series resistor?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "leds", "section": "Current limiting", "anchor": "limit current from a voltage supply" }] },
+    { "id": "one-press-many-events", "text": "One physical button press generates several digital input events. What causes that?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "switches", "section": "Contact bounce", "anchor": "several transitions for a single button action" }] },
+    { "id": "debounce", "text": "How can software wait for a push button to settle before accepting a change?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "switches", "section": "Debouncing", "anchor": "remains stable for an interval" }] },
+    { "id": "pcb-noise", "text": "Why can a shared narrow PCB return connection disturb a sensitive circuit?", "themes": ["pcb"], "tags": ["paraphrase", "theme-filter"], "relevant": [{ "documentId": "pcb", "section": "Return paths", "anchor": "couple switching noise into sensitive circuitry" }] },
+    { "id": "solder-short", "text": "How do I find accidental solder connections between neighbouring pads?", "themes": ["pcb"], "tags": ["paraphrase", "theme-filter"], "relevant": [{ "documentId": "soldering", "section": "Solder bridges", "anchor": "unintended bridges" }] },
+    { "id": "tight-bend", "text": "My longest carriage derails on the tightest bend. What should I check?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "curves", "section": "Curve radius", "anchor": "radius compatible with the rolling stock" }] },
+    { "id": "reverse-curves", "text": "How can I avoid sudden changes of curvature and coupling stress between opposing curves?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "curves", "section": "Transitions", "anchor": "A transition introduces curvature gradually" }] },
+    { "id": "branch-route", "text": "What directs an approaching train onto one of two branches?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "turnouts", "section": "Route selection", "anchor": "A turnout directs a train onto one of two routes" }] },
+    { "id": "point-obstruction", "text": "A turnout's movable rails do not close fully. Can dirt make a wheel follow the wrong path?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "turnouts", "section": "Point rails", "anchor": "Dirt or mechanical obstruction" }] },
+    { "id": "gauge-measurement", "text": "What is the distance between the inside faces of the two running rails called?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "gauge", "section": "Gauge", "anchor": "distance between the inner faces" }] },
+    { "id": "scale-versus-gauge", "text": "Do model scale and track gauge describe the same measurement?", "tags": ["english"], "relevant": [{ "documentId": "gauge", "section": "Scale", "anchor": "Scale and track gauge describe different measurements" }] },
+    { "id": "independent-locomotives", "text": "How can multiple locomotives on one powered track respond to different digital commands?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "dcc", "section": "Addresses", "anchor": "responds to its configured address" }] },
+    { "id": "decoder-motor", "text": "What interprets DCC commands and controls a locomotive motor and lights?", "tags": ["english"], "relevant": [{ "documentId": "dcc", "section": "Decoder", "anchor": "interprets digital commands" }] },
+    { "id": "occupancy-pt", "text": "Como detectar a ocupação de um bloco pelo consumo de corrente do comboio?", "themes": ["railway", "electronics"], "tags": ["cross-language", "portuguese", "multi-theme"], "relevant": [{ "documentId": "occupancy", "section": "Current sensing", "anchor": "rolling stock draws current" }] },
+    { "id": "optical", "text": "Can I detect an unpowered vehicle by interrupting a beam of light?", "themes": ["railway"], "tags": ["paraphrase", "theme-filter"], "relevant": [{ "documentId": "occupancy", "section": "Optical sensing", "anchor": "interrupts a beam of light" }] },
+    { "id": "occupied-block", "text": "Should a signal show clear when the next protected track section is occupied?", "tags": ["english"], "relevant": [{ "documentId": "signals", "section": "Block protection", "anchor": "should not be presented as clear" }] },
+    { "id": "conflicting-routes", "text": "What prevents two incompatible train movements from being authorised together?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "signals", "section": "Interlocking", "anchor": "prevents conflicting routes" }] },
+    { "id": "platform-overhang", "text": "A long carriage hits a platform corner only on a curve. Which clearance must I inspect?", "tags": ["paraphrase", "english"], "relevant": [{ "documentId": "clearances", "section": "Swept envelope", "anchor": "overhangs the track centreline" }] },
+    { "id": "bridge-clearance", "text": "What height and width checks are needed before running tall vehicles under a bridge?", "tags": ["english"], "relevant": [{ "documentId": "clearances", "section": "Bridges", "anchor": "Check both height and width" }] },
+    { "id": "balastro-pt", "text": "Para que serve o balastro integrado da via C?", "tags": ["portuguese"], "relevant": [{ "documentId": "via-c", "section": "Balastro integrado", "anchor": "suporta os carris" }] },
+    { "id": "roadbed-en", "text": "How does the built-in roadbed support the rails on C track for a temporary layout?", "tags": ["cross-language", "english"], "relevant": [{ "documentId": "via-c", "section": "Balastro integrado", "anchor": "traçado temporário" }] },
+    { "id": "wheel-pickup-en", "text": "Grease on the wheels causes intermittent electrical pickup. What maintenance helps?", "tags": ["cross-language", "english"], "relevant": [{ "documentId": "limpeza", "section": "Rodas", "anchor": "sujidade nas rodas prejudicam" }] },
+    { "id": "clean-rails-pt", "text": "Como tratar sujidade e oxidação nos carris sem deixar resíduos isolantes?", "tags": ["portuguese"], "relevant": [{ "documentId": "limpeza", "section": "Carris", "anchor": "Evite produtos que deixem resíduos isolantes" }] },
+    { "id": "decoupling-two-sources", "text": "Explain local supply decoupling and why its PCB connections should be short.", "themes": ["components", "pcb"], "tags": ["multi-source", "multi-theme"], "relevant": [{ "documentId": "capacitors", "section": "Supply decoupling", "anchor": "brief local current demands" }, { "documentId": "pcb", "section": "Local capacitors", "anchor": "reduce the loop area" }] },
+    { "id": "component-only", "text": "current sensing detector", "themes": ["components"], "tags": ["theme-filter", "unsupported"], "relevant": [] },
+    { "id": "railway-only-timer", "text": "NE555 RESET input", "themes": ["railway"], "tags": ["exact-part", "theme-filter", "unsupported"], "relevant": [] },
+    { "id": "unknown-theme", "text": "resistor resistance", "themes": ["astronomy"], "tags": ["theme-filter", "unsupported"], "relevant": [] },
+    { "id": "missing-specification", "text": "What is the maximum certified operating voltage of the NE555?", "tags": ["exact-part", "unsupported"], "relevant": [] },
+    { "id": "absent-part", "text": "ZXQ987654 superconducting oscillator specification", "tags": ["exact-part", "unsupported"], "relevant": [] },
+    { "id": "unrelated-en", "text": "How should I configure database replication across three servers?", "tags": ["english", "unsupported"], "relevant": [] },
+    { "id": "unrelated-pt", "text": "Qual é a receita tradicional de arroz doce com canela?", "tags": ["portuguese", "unsupported"], "relevant": [] }
+  ]
+}

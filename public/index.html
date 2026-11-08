@@ -95,22 +95,26 @@
   <dialog id="documents-dialog" aria-labelledby="documents-heading">
     <div class="documents-heading"><h2 id="documents-heading">Documents</h2><button type="button" id="close-documents" aria-label="Close documents">×</button></div>
     <p class="muted small">Add documents to your local collection, organised by theme. Search them in a local Ollama conversation.</p>
+    <h3 id="document-form-heading">Add document</h3>
+    <p id="document-editing-id" class="document-id" hidden></p>
     <form id="document-form">
       <fieldset id="document-fields">
-        <label for="document-file">Upload a document</label>
-        <input id="document-file" type="file" accept=".pdf,.html,.htm,.md,.markdown,.txt,.text">
-        <p class="small muted">PDF, HTML, Markdown or text · up to 25 MiB</p>
+        <div id="document-upload-fields">
+          <label for="document-file">Upload a document</label>
+          <input id="document-file" type="file" accept=".pdf,.html,.htm,.md,.markdown,.txt,.text">
+          <p class="small muted">PDF, HTML, Markdown or text · up to 25 MiB</p>
+        </div>
         <label for="document-url">URL</label>
         <input id="document-url" type="url" placeholder="https://example.com/document.pdf">
-        <p class="small muted">Use a URL as the source, or add an optional download URL for an uploaded file so it can be recovered later.</p>
-        <label for="document-title">Title <span class="muted">(optional)</span></label>
+        <p id="document-url-help" class="small muted">Use a URL as the source, or add an optional download URL for an uploaded file so it can be recovered later.</p>
+        <label for="document-title">Title <span id="document-title-optional" class="muted">(optional)</span></label>
         <input id="document-title" maxlength="500" type="text">
         <label for="document-existing-themes">Existing themes</label>
         <select id="document-existing-themes" multiple size="3" aria-describedby="theme-help"></select>
         <p id="theme-help" class="small muted">Select any existing themes, or enter new ones below. Choose at least one.</p>
         <label for="document-new-themes">Add themes <span class="muted">(comma separated)</span></label>
         <input id="document-new-themes" type="text" placeholder="electronics, railway layouts">
-        <button type="submit" id="document-submit">Add to collection</button>
+        <div class="document-actions"><button type="submit" id="document-submit">Add to collection</button><button type="button" id="document-cancel" hidden>Cancel edit</button></div>
       </fieldset>
     </form>
     <p id="document-progress" role="status" aria-live="polite"></p>

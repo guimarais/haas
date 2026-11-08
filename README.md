@@ -11,7 +11,7 @@ npm ci --ignore-scripts
 npm start
 ```
 
-Open **http://127.0.0.1:4317**. The server binds only to loopback. An exported `OPENAI_API_KEY` is used automatically. Otherwise copy `.env.example` to `.env`, enter your key there, and restart. Credentials stay on the backend; `.env`, conversations and project files are ignored by Git.
+Open **http://127.0.0.1:4317**. The server binds only to loopback. An exported `OPENAI_API_KEY` is used automatically. Otherwise copy `.env.example` to `.env`, enter your key there, and restart. Credentials stay on the backend. Chats and projects are excluded from the application's Git repository; each can optionally have its own local Git history.
 
 Optional backend settings:
 
@@ -26,7 +26,7 @@ Optional backend settings:
 
 Select OpenAI or Ollama and a model at the top of the page. Installed Ollama models are discovered from `/api/tags`; the app checks `/api/show` for tool support before starting a task. Local requests use `reasoning_effort: none` to avoid a hidden thinking phase delaying replies. For tool-heavy design work, configure a sufficiently large context in the Ollama model (for example, `PARAMETER num_ctx 32768` in its Modelfile) and set `OLLAMA_CONTEXT` to match. Changing that variable alone does not reconfigure Ollama. See [Ollama's compatibility documentation](https://docs.ollama.com/api/openai-compatibility).
 
-**Web research uses OpenAI's API**, even with Ollama selected. It is disabled after a conversation accesses the local document collection. Local conversation inference otherwise does not make web search local. Missing credentials and unavailable models are reported in the chat; no provider fallback runs silently.
+**Web research uses OpenAI's API**, even with Ollama selected. It is disabled for a chat or project after any of its conversations accesses the local document collection. Local conversation inference otherwise does not make web search local. Missing credentials and unavailable models are reported in the chat; no provider fallback runs silently.
 
 ## Use
 
@@ -36,9 +36,18 @@ Select OpenAI or Ollama and a model at the top of the page. Installed Ollama mod
 
 The model reads the relevant `SKILL.md`, selects tools and continues until it has a result or needs information. Tool activity can be expanded in the chat. Markdown tables and source links render as sanitised HTML; external images and embedded content are disabled.
 
-Use **Attach files** to import designs. Selecting sibling KiCad files together keeps them in the same imported project folder. Original bytes are preserved in `data/originals/`; the agent edits copies in `workspace/imports/`. Project files are downloadable from the sidebar or chat links. Imported KiCad projects can still reference external libraries or hierarchical sheets: include their dependencies with the working copy before editing them.
+Use **Attach files** to import designs. Selecting sibling KiCad files together keeps them in the same imported folder. Original bytes are preserved in `data/originals/`; the agent edits copies in the active chat or project's `workspace/imports/`. Artefacts are downloadable from the sidebar or conversation links. Imported KiCad projects can still reference external libraries or hierarchical sheets: include their dependencies with the working copy before editing them.
 
-The sidebar's **Conversations** list shows saved chats, newest activity first. Select one to reopen its messages and tool results and continue chatting. On a narrow screen, use **History** to open the sidebar. Titles come from the first message; the current chat is highlighted. New conversation starts fresh context while retaining project files and saved chats.
+The sidebar separates **Chats** and **Projects**:
+
+- **Chats** are standalone conversations for testing ideas and exploring questions. Each has its own files, separate from other chats and projects. Chat titles come from their first message.
+- **Projects** are named, longer-term bodies of work with a description, shared artefacts and multiple conversations. Open a project and use **＋** beside **Project conversations** to start fresh context while keeping its files. The project description is supplied to the assistant in every conversation. Reopening a project restores its last selected conversation.
+
+On a narrow screen, use **Browse** to open the sidebar. Finish or stop a running task before switching chats or projects. Neither projects nor chats add scheduling or automatic continuation after backend interruption.
+
+**Track with Git** is off by default for both chats and projects. Enabling it creates an independent local repository containing that chat or project's metadata, conversations and working files. Snapshots are committed on enable, after runs and imports, and through **Save snapshot**. Disabling tracking preserves the repository history outside the workspace; re-enabling restores it and snapshots intervening changes. Nothing is pushed or published. Git must be installed to enable tracking. Runtime credentials, MCP logs, retained upload originals and the shared document index stay outside these repositories. Private text deliberately saved in conversations or working files is included when you enable tracking.
+
+Storage lives in `data/chats/<id>/` and `data/projects/<id>/`, each containing `haas.json`, `sessions/` and `workspace/`. Archived Git histories live in `data/git-history/`. All remain excluded from the application's repository by `/data/`. On the first start after upgrading, existing conversations and the shared `workspace/` are copied into an **Imported workspace** project, retaining conversation IDs and original files. The old locations are left intact; migration runs once.
 
 **Stop** cancels the active run. Closing/reloading the page detaches the browser while the backend can finish the task. The selected chat is restored from Pi's JSONL sessions after a restart. Backend interruption stops unfinished work; it is never automatically replayed. Inspect saved progress before asking it to retry. Finish or stop an active task before switching conversations.
 
@@ -64,7 +73,7 @@ The tools are `rag_list`, `rag_search`, `rag_add`, `rag_themes` and `rag_remove`
 
 Search combines the top BM25 and cosine-similarity results using equal-weight reciprocal rank fusion, preferring semantic rank when fusion scores tie. A search with several themes uses their union and deduplicates passages; omitted themes search everything. The default is eight passages, including titles, source links, page/section references, and stale-version markers. Passages target approximately 500 tokens plus overlap, using a character estimate rather than the model's tokenizer. Scanned PDF OCR, authenticated websites and Office formats are not supported. Extracted text is capped at 10 million characters per document.
 
-**Privacy:** document tools require a local Ollama chat model. Access permanently marks that saved conversation as local-only, including after restart and context compaction. Switching it to OpenAI or an Ollama cloud model is blocked; web search and MCP tools are blocked in that conversation. Start a new conversation for external tools. `OLLAMA_URL` must use `localhost`, `127.0.0.1` or `::1` for document inference. When the embedding service is unavailable or its model changed, search returns explicitly labelled BM25-only results; ingestion requires successful embeddings before publishing. No cloud fallback is used.
+**Privacy:** document tools require a local Ollama chat model. Access permanently marks the chat or project as local-only, including after restart and context compaction. Projects share working files, so this applies to all their conversations, including new ones. Switching to OpenAI or an Ollama cloud model is blocked; web search and MCP tools are blocked. Start a separate chat or project for external tools. An imported workspace containing any document conversation is also local-only. `OLLAMA_URL` must use `localhost`, `127.0.0.1` or `::1` for document inference. When the embedding service is unavailable or its model changed, search returns explicitly labelled BM25-only results; ingestion requires successful embeddings before publishing. No cloud fallback is used.
 
 ### Catalogue and recovery
 
@@ -122,7 +131,7 @@ If corpus measurements justify approximate search, create a persistent cosine **
 
 `mcp.json` uses the existing local installations and is ignored by Git because it contains machine-specific paths and may contain credentials. For a new checkout, copy `mcp.example.json` to `mcp.json` and set the Konnect executable, Turnout Python executable and `PYTHONPATH` to your installations. `${APP}`, `${DATA}` and `${WORKSPACE}` are expanded by the app. Restart after changing MCP configuration or skills.
 
-**Konnect** runs as its own stdio process. Its app-owned configuration sets the default project directory to `workspace/`. Tools are discovered lazily, and Pi honours tool-list changes after `load_toolset`. Native schematic editing, ERC/DRC and exports use files and `kicad-cli`. Live board operations require **KiCad 10**, IPC enabled, and the **workspace board** open. Targeted `run_drc` with `sync_live_board=true` saves/verifies that board before checking it. The unscoped `save_project` and global preference mutations are disabled.
+**Konnect** runs as its own stdio process. Its app-owned configuration sets the default project directory to the active chat or project's workspace. Tools are discovered lazily, and Pi honours tool-list changes after `load_toolset`. Native schematic editing, ERC/DRC and exports use files and `kicad-cli`. Live board operations require **KiCad 10**, IPC enabled, and the **workspace board** open. Targeted `run_drc` with `sync_live_board=true` saves/verifies that board before checking it. The unscoped `save_project` and global preference mutations are disabled.
 
 **Turnout** runs through `scripts/run_turnout.py` using its existing virtualenv. The launcher redirects its layout/preview output into this app's workspace and leaves the Turnout checkout unchanged. Its current catalogue, geometry checks and editing capabilities define what layouts are supported. Review the native `.xtc` in XTrackCAD; track-centreline checks do not establish vehicle clearances.
 

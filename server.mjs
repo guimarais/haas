@@ -4,11 +4,10 @@ import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { APP, DATA as DEFAULT_DATA, WORKSPACE as DEFAULT_WORKSPACE, closeChat, createChat, messageText, ollamaModels, selectModel, transcript } from './agent.mjs';
 import { atomicJson, listFiles, safePath } from './workspace.mjs';
 import { Rag, MAX_DOCUMENT_BYTES } from './rag.mjs';
-import { documentConversation } from './rag-tools.mjs';
+import { Organization } from './organization.mjs';
 
 const contentTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.pdf': 'application/pdf' };
 const cleanError = error => {
@@ -35,12 +34,21 @@ function json(response, value, status = 200) {
 export async function startServer({ port = Number(process.env.PORT || 4317), dataDir: DATA = DEFAULT_DATA, workspace: WORKSPACE = DEFAULT_WORKSPACE, chatOptions = {}, ragOptions = {} } = {}) {
   const warnings = [];
   const onWarning = message => { warnings.push(String(message)); if (warnings.length > 5) warnings.shift(); };
-  let sessionFile;
-  try { ({ sessionFile } = JSON.parse(await readFile(path.join(DATA, 'current-session.json'), 'utf8'))); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const organization = new Organization(DATA);
+  await organization.migrate(WORKSPACE);
+  let current;
+  try { current = JSON.parse(await readFile(path.join(DATA, 'current-session.json'), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let scope = current?.kind ? await organization.get(current.kind, current.id) : await organization.create('chat');
   const rag = new Rag({ dataDir: DATA, ...ragOptions });
-  const loadChat = options => createChat({ ...chatOptions, dataDir: DATA, workspace: WORKSPACE, rag, onWarning, ...options });
-  let chat = await loadChat({ sessionFile });
-  const rememberChat = () => atomicJson(path.join(DATA, 'current-session.json'), { sessionFile: chat.session.sessionManager.getSessionFile() });
+  const loadChat = (target, options = {}) => createChat({ ...chatOptions, dataDir: DATA, workspace: target.workspace,
+    sessionDir: target.sessionDir, privacyFile: path.join(target.root, 'local-only.json'),
+    project: target.kind === 'project' ? { name: target.name, description: target.description } : undefined, rag, onWarning, ...options });
+  let chat = await loadChat(scope, { sessionFile: current?.sessionFile });
+  const rememberChat = async () => {
+    const sessionFile = chat.session.sessionManager.getSessionFile();
+    await organization.save(scope, { currentSession: path.basename(sessionFile), sessionId: chat.session.sessionManager.getSessionId() });
+    await atomicJson(path.join(DATA, 'current-session.json'), { kind: scope.kind, id: scope.id, sessionFile });
+  };
   await rememberChat();
   let selection = { provider: 'openai', model: process.env.OPENAI_MODEL || 'gpt-5.4' };
   try { selection = JSON.parse(await readFile(path.join(DATA, 'selection.json'), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') onWarning('Saved model selection could not be read; using OpenAI.'); }
@@ -50,12 +58,32 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
 
   async function conversations() {
     const currentId = chat.session.sessionManager.getSessionId();
-    const saved = (await SessionManager.list(WORKSPACE, path.join(DATA, 'sessions'))).map(info => ({
-      id: info.id, title: (info.name || info.firstMessage || 'New conversation').replace(/\s+/g, ' ').slice(0, 90),
-      updatedAt: info.modified.toISOString(), active: info.id === currentId,
-    }));
-    if (!saved.some(info => info.active)) saved.unshift({ id: currentId, title: 'New conversation', updatedAt: new Date().toISOString(), active: true });
-    return saved;
+    const saved = [];
+    for (const target of [...await organization.list('chat'), ...await organization.list('project')]) {
+      const sessions = await organization.sessions(target);
+      if (!sessions.length && target.sessionId) saved.push({ id: target.sessionId, title: 'New chat', updatedAt: target.createdAt,
+        active: target.sessionId === currentId, kind: target.kind, scopeId: target.id });
+      for (const info of sessions) saved.push({
+        id: info.id, title: (info.name || info.firstMessage || 'New conversation').replace(/\s+/g, ' ').slice(0, 90),
+        updatedAt: info.modified.toISOString(), active: info.id === currentId, kind: target.kind, scopeId: target.id,
+      });
+    }
+    if (!saved.some(info => info.active)) saved.push({ id: currentId, title: 'New chat', updatedAt: new Date().toISOString(), active: true, kind: scope.kind, scopeId: scope.id });
+    return saved.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async function switchChat(target, options) {
+    // Load first so a failed restore leaves the current conversation usable.
+    const next = await loadChat(target, options);
+    await closeChat(chat, 'resume');
+    scope = target;
+    chat = next;
+    await rememberChat();
+  }
+
+  async function snapshot() {
+    try { if (await organization.tracking(scope)) await organization.snapshot(scope); }
+    catch (error) { onWarning(`Git snapshot failed: ${cleanError(error)}`); }
   }
 
   const server = http.createServer(async (request, response) => {
@@ -76,11 +104,14 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
         let localModels = [], ollamaError;
         try { localModels = await ollamaModels(); } catch { ollamaError = 'Ollama is not reachable. Start Ollama to use a local model.'; }
         return json(response, {
-          selection, busy, conversations: await conversations(), messages: transcript(chat.session), files: await listFiles(WORKSPACE), workspace: WORKSPACE,
+          selection, busy, conversations: await conversations(), messages: transcript(chat.session), files: await listFiles(scope.workspace), workspace: scope.workspace,
+          scope: await organization.publicScope(scope),
+          legacyWorkspace: scope.id === 'imported-workspace' ? WORKSPACE : undefined,
+          projects: await Promise.all((await organization.list('project')).map(target => organization.publicScope(target))),
           skills: chat.skills, openaiConfigured: !!process.env.OPENAI_API_KEY, searchConfigured: !!process.env.OPENAI_API_KEY,
           models: { openai: chat.runtime.getModels('openai').map(model => model.id), ollama: localModels }, ollamaError,
           tools: chat.session.getAllTools().filter(tool => tool.name.startsWith('mcp__')).map(tool => tool.name), warnings,
-          localOnly: documentConversation(chat.session.sessionManager),
+          localOnly: await chat.isLocalOnly(),
         });
       }
       if (request.method === 'GET' && url.pathname === '/api/documents') {
@@ -150,9 +181,11 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
             if (event.type === 'compaction_start') send({ type: 'status', text: 'Summarising earlier messages…' });
           });
           await chat.session.prompt(input.message.trim(), { expandPromptTemplates: false });
+          await snapshot();
           send({ type: 'done' });
           response.end();
         } catch (error) {
+          await snapshot();
           if (response.headersSent) { response.write(`${JSON.stringify({ type: 'error', text: cleanError(error) })}\n`); response.end(); }
           else json(response, { error: cleanError(error) }, error.status || 400);
         } finally { unsubscribe?.(); busy = false; }
@@ -162,24 +195,38 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
         await chat.session.abort();
         return json(response, { ok: true });
       }
-      if (request.method === 'POST' && ['/api/new', '/api/conversations/open'].includes(url.pathname)) {
+      if (request.method === 'POST' && ['/api/new', '/api/conversations/open', '/api/projects', '/api/projects/open', '/api/projects/conversations/new', '/api/git', '/api/snapshot'].includes(url.pathname)) {
         if (busy) return json(response, { error: 'Stop the current task before switching conversations.' }, 409);
         busy = true;
         try {
-          const fresh = url.pathname === '/api/new';
-          let target;
-          if (!fresh) {
+          if (url.pathname === '/api/git') {
+            const { enabled } = JSON.parse(await body(request));
+            await organization.setTracking(scope, enabled);
+          } else if (url.pathname === '/api/snapshot') {
+            await organization.snapshot(scope);
+          } else if (url.pathname === '/api/projects') {
+            const input = JSON.parse(await body(request));
+            await switchChat(await organization.create('project', input), { fresh: true });
+          } else if (url.pathname === '/api/projects/open') {
             const { id } = JSON.parse(await body(request));
-            if (id === chat.session.sessionManager.getSessionId()) return json(response, { ok: true });
-            target = (await SessionManager.list(WORKSPACE, path.join(DATA, 'sessions'))).find(info => info.id === id);
-            if (!target) return json(response, { error: 'Conversation not found.' }, 404);
-            await safePath(path.join(DATA, 'sessions'), target.path);
+            const target = await organization.get('project', id);
+            if (scope.kind !== 'project' || scope.id !== id) await switchChat(target, { sessionFile: target.currentSession && await safePath(target.sessionDir, target.currentSession) });
+          } else if (url.pathname === '/api/projects/conversations/new') {
+            if (scope.kind !== 'project') throw new Error('Open a project first.');
+            await switchChat(scope, { fresh: true });
+          } else if (url.pathname === '/api/new') {
+            await switchChat(await organization.create('chat'), { fresh: true });
+          } else {
+            const { id } = JSON.parse(await body(request));
+            const conversation = (await conversations()).find(info => info.id === id);
+            if (!conversation) return json(response, { error: 'Conversation not found.' }, 404);
+            if (!conversation.active) {
+              const target = await organization.get(conversation.kind, conversation.scopeId);
+              const session = (await organization.sessions(target)).find(info => info.id === id);
+              await switchChat(target, { sessionFile: session?.path || await safePath(target.sessionDir, target.currentSession) });
+            }
           }
-          // Prepare the replacement first so a failed restore leaves the current chat usable.
-          const next = await loadChat({ fresh, sessionFile: target?.path });
-          await closeChat(chat, fresh ? 'new' : 'resume');
-          chat = next;
-          await rememberChat();
+          await snapshot();
           return json(response, { ok: true });
         } finally { busy = false; }
       }
@@ -192,7 +239,7 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
           if (!name || name.length > 180 || name.startsWith('.') || /[\\/\x00-\x1f]/.test(name) || !/^[a-f0-9-]{36}$/.test(batch)) throw new Error('Invalid file name.');
           const bytes = await body(request, 25 * 1024 * 1024);
           const original = path.join(DATA, 'originals', batch, name);
-          const copy = await safePath(WORKSPACE, path.join('imports', batch, name));
+          const copy = await safePath(scope.workspace, path.join('imports', batch, name));
           await mkdir(path.dirname(original), { recursive: true, mode: 0o700 });
           await mkdir(path.dirname(copy), { recursive: true });
           await writeFile(original, bytes, { flag: 'wx', mode: 0o400 });
@@ -200,11 +247,12 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
           // copyFile preserves a read-only original's mode; the working copy must be editable.
           const { chmod } = await import('node:fs/promises');
           await chmod(copy, 0o600);
-          return json(response, { path: path.relative(WORKSPACE, copy), name });
+          await snapshot();
+          return json(response, { path: path.relative(scope.workspace, copy), name });
         } finally { busy = false; }
       }
       if (request.method === 'GET' && url.pathname.startsWith('/files/')) {
-        const file = await safePath(WORKSPACE, decodeURIComponent(url.pathname.slice('/files/'.length)));
+        const file = await safePath(scope.workspace, decodeURIComponent(url.pathname.slice('/files/'.length)));
         if (!(await stat(file)).isFile()) return json(response, { error: 'File not found.' }, 404);
         response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}` });
         const stream = createReadStream(file);

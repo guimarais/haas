@@ -178,7 +178,7 @@ test('document privacy locks survive session restore, block cloud models and ext
 
   const runtime = await ModelRuntime.create({ authPath: path.join(root, 'auth.json'), modelsPath: null, modelsStorePath: path.join(root, 'models.json'), refreshOnCreate: false });
   runtime.registerProvider('ollama', { api: 'openai-completions', baseUrl: `${url}/v1`, apiKey: 'test', models: [{ id: model, name: model, reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 2048, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
-  const options = { runtime, dataDir: path.join(root, 'chat-data'), workspace, extensions: [], rag };
+  const options = { runtime, dataDir: path.join(root, 'chat-data'), workspace, extensions: [], rag, privacyFile: path.join(root, 'local-only.json') };
   await rag.ingest({ name: 'private.md', themes: ['electronics'] }, { bytes: Buffer.from('Private resistor notes: NE555 current specification.') });
   config.chatSteps.push({ name: 'rag_search', args: { query: 'NE555', themes: ['electronics'] } },
     { name: 'web_search', args: { query: 'Private resistor notes' } }, 'The local passage is available. External search is disabled.');
@@ -195,6 +195,12 @@ test('document privacy locks survive session restore, block cloud models and ext
   const restored = await createChat({ ...options, sessionFile });
   try { assert.equal(documentConversation(restored.session.sessionManager), true); }
   finally { await closeChat(restored); }
+  const sibling = await createChat({ ...options, fresh: true });
+  try {
+    assert.equal(documentConversation(sibling.session.sessionManager), false);
+    assert.equal(await sibling.isLocalOnly(), true, 'Shared project files retain the privacy restriction in a fresh conversation.');
+    await assert.rejects(selectModel(sibling, 'openai', 'gpt-5.4'), /must stay local/);
+  } finally { await closeChat(sibling); }
 });
 
 test('frontend ingestion streams progress, persists uploads and rebuilds local-only sources', async t => {

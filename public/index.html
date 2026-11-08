@@ -13,24 +13,35 @@
 </head>
 <body>
   <aside class="sidebar" id="workspace-sidebar">
-    <button id="close-sidebar" class="sidebar-close" aria-label="Close conversation history">×</button>
+    <button id="close-sidebar" class="sidebar-close" aria-label="Close chats and projects">×</button>
     <a class="brand" href="/" aria-label="Haas home"><span class="brand-icon">h.</span><span>haas<span class="brand-sub">PERSONAL WORKBENCH</span></span></a>
-    <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
-    <div class="side-label history-label">CONVERSATIONS</div>
-    <nav aria-label="Conversation history" class="history-nav"><ul id="conversations" class="history-list"></ul></nav>
+    <div class="organization-actions"><button id="new-chat" class="new-chat">＋ New chat</button><button id="new-project" class="new-chat">＋ New project</button></div>
+    <div class="side-label history-label">CHATS</div>
+    <nav aria-label="Standalone chats" class="history-nav"><ul id="chats" class="history-list"></ul></nav>
+    <div class="side-label history-label">PROJECTS</div>
+    <nav aria-label="Projects" class="history-nav"><ul id="projects" class="history-list"></ul></nav>
+    <section id="project-conversations" hidden>
+      <div class="side-label history-label">PROJECT CONVERSATIONS <button id="new-project-conversation" type="button" aria-label="New project conversation">＋</button></div>
+      <nav aria-label="Project conversations" class="history-nav"><ul id="conversations" class="history-list"></ul></nav>
+    </section>
+    <section class="tracking-controls" aria-label="Version history">
+      <label><input id="git-tracking" type="checkbox"> Track with Git</label>
+      <button id="save-snapshot" type="button" hidden>Save snapshot</button>
+      <p id="tracking-status" class="small muted">Local only</p>
+    </section>
     <div class="side-label">CAPABILITIES</div>
     <div class="capability"><span>⌕</span><div>Component research<small>Live prices · Portugal / EUR</small></div></div>
     <div class="capability"><span>▦</span><div>PCB design<small>KiCad · Konnect MCP</small></div></div>
     <div class="capability"><span>⌘</span><div>Railway layouts<small>XTrackCAD · Turnout MCP</small></div></div>
-    <div class="side-label files-title">PROJECT FILES <button id="refresh" title="Refresh project files" aria-label="Refresh project files">↻</button></div>
-    <p id="no-files" class="muted small">Design files and research outputs will appear here.</p>
+    <div class="side-label files-title">ARTEFACTS <button id="refresh" title="Refresh artefacts" aria-label="Refresh artefacts">↻</button></div>
+    <p id="no-files" class="muted small">Files from this chat or project will appear here.</p>
     <ul id="files" class="file-list"></ul>
     <div class="side-footer"><span class="dot"></span> Runs on your computer<small>Powered by Pi · Single-user workspace</small></div>
   </aside>
   <main>
     <header>
-      <button id="toggle-sidebar" class="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="false">History</button>
-      <div class="breadcrumb">WORKSPACE <span>/</span> <strong>Conversation</strong></div>
+      <button id="toggle-sidebar" class="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="false">Browse</button>
+      <div class="breadcrumb"><span id="scope-kind">CHAT</span> <span>/</span> <strong id="scope-name">New chat</strong></div>
       <div class="model-controls">
         <label class="sr-only" for="provider">Model provider</label>
         <select id="provider"><option value="openai">OpenAI</option><option value="ollama">Ollama · local</option></select>
@@ -69,6 +80,18 @@
       <div class="composer-note">Tools and skills run automatically. <span>Web research uses OpenAI, including with Ollama.</span></div>
     </div>
   </main>
+  <dialog id="project-dialog" aria-labelledby="project-heading">
+    <form id="project-form">
+      <div class="documents-heading"><h2 id="project-heading">New project</h2><button id="close-project" type="button" aria-label="Close new project">×</button></div>
+      <p class="small muted">Keep related conversations and artefacts together. Git tracking starts off.</p>
+      <label for="project-name">Name</label>
+      <input id="project-name" maxlength="120" required autocomplete="off">
+      <label for="project-description">What are you working toward?</label>
+      <textarea id="project-description" maxlength="4000" rows="3"></textarea>
+      <p id="project-error" class="error" role="status"></p>
+      <button id="create-project" type="submit">Create project</button>
+    </form>
+  </dialog>
   <dialog id="documents-dialog" aria-labelledby="documents-heading">
     <div class="documents-heading"><h2 id="documents-heading">Documents</h2><button type="button" id="close-documents" aria-label="Close documents">×</button></div>
     <p class="muted small">Add documents to your local collection, organised by theme. Search them in a local Ollama conversation.</p>

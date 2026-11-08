@@ -19,6 +19,7 @@ async function api(url, options = {}) {
 
 function fileUrl(value) {
   let file = value;
+  if (state?.scope.id === 'imported-workspace' && state.legacyWorkspace && file.startsWith(`${state.legacyWorkspace}/`)) file = file.slice(state.legacyWorkspace.length + 1);
   if (state?.workspace && file.startsWith(`${state.workspace}/`)) file = file.slice(state.workspace.length + 1);
   if (file.startsWith('/') || file.startsWith('..') || /^(?:javascript|data|file):/i.test(file)) return null;
   return `/files/${file.split('/').map(encodeURIComponent).join('/')}`;
@@ -79,8 +80,8 @@ function tool(name, args, output, isError = false) {
 
 function setRunning(value) {
   running = value;
-  for (const id of ['send', 'provider', 'model', 'new-chat', 'attach']) $(id).disabled = value;
-  document.querySelectorAll('#conversations button').forEach(button => { button.disabled = value; });
+  for (const id of ['send', 'provider', 'model', 'new-chat', 'new-project', 'new-project-conversation', 'git-tracking', 'save-snapshot', 'attach']) $(id).disabled = value;
+  document.querySelectorAll('.history-list button').forEach(button => { button.disabled = value; });
   $('stop').hidden = !value;
   $('status').textContent = value ? 'Working…' : 'Ready';
   $('message').disabled = value;
@@ -104,8 +105,20 @@ function showSidebar(open) {
   $('toggle-sidebar').setAttribute('aria-expanded', String(open));
 }
 
-function renderConversations(conversations) {
-  $('conversations').replaceChildren();
+async function navigate(url, input) {
+  if (running) return;
+  setRunning(true);
+  try {
+    await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input || {}) });
+    pendingFiles = []; $('attachments').replaceChildren();
+    await refresh({ history: true });
+    showSidebar(false);
+  } catch (error) { notice(error.message); }
+  finally { setRunning(false); }
+}
+
+function renderConversations(conversations, container) {
+  container.replaceChildren();
   for (const conversation of conversations) {
     const item = document.createElement('li');
     const button = document.createElement('button');
@@ -122,17 +135,34 @@ function renderConversations(conversations) {
     button.addEventListener('click', async () => {
       if (running) return;
       if (conversation.active) { showSidebar(false); return; }
-      setRunning(true);
-      try {
-        await api('/api/conversations/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: conversation.id }) });
-        pendingFiles = []; $('attachments').replaceChildren();
-        await refresh({ history: true });
-        showSidebar(false);
-      } catch (error) { notice(error.message); }
-      finally { setRunning(false); }
+      await navigate('/api/conversations/open', { id: conversation.id });
     });
-    item.append(button); $('conversations').append(item);
+    item.append(button); container.append(item);
   }
+}
+
+function renderOrganization() {
+  renderConversations(state.conversations.filter(item => item.kind === 'chat'), $('chats'));
+  renderConversations(state.conversations.filter(item => item.kind === 'project' && item.scopeId === state.scope.id), $('conversations'));
+  $('projects').replaceChildren();
+  for (const project of state.projects) {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button'; button.disabled = running;
+    const title = document.createElement('span'); title.textContent = project.name;
+    button.append(title);
+    if (project.id === state.scope.id) button.setAttribute('aria-current', 'page');
+    button.title = project.description || project.name;
+    button.addEventListener('click', () => navigate('/api/projects/open', { id: project.id }));
+    item.append(button); $('projects').append(item);
+  }
+  $('project-conversations').hidden = state.scope.kind !== 'project';
+  $('scope-kind').textContent = state.scope.kind.toUpperCase();
+  const active = state.conversations.find(item => item.active);
+  $('scope-name').textContent = state.scope.kind === 'project' ? state.scope.name : active?.title || 'New chat';
+  $('git-tracking').checked = state.scope.gitTracked;
+  $('save-snapshot').hidden = !state.scope.gitTracked;
+  $('tracking-status').textContent = state.scope.gitTracked ? 'Local Git history · saves after each run' : 'Git tracking off';
 }
 
 function modelOptions() {
@@ -145,13 +175,17 @@ function modelOptions() {
 async function refresh({ history = false } = {}) {
   state = await (await api('/api/state')).json();
   $('provider').querySelector('option[value="openai"]').disabled = state.localOnly;
-  $('provider').title = state.localOnly ? 'This document conversation is restricted to local models.' : '';
+  $('provider').title = state.localOnly ? 'This chat or project is restricted to local models.' : '';
   renderFiles(state.files);
-  renderConversations(state.conversations);
+  renderOrganization();
   if (history) {
     selected[state.selection.provider] = state.selection.model;
     $('provider').value = state.selection.provider;
     $('model').value = state.selection.model;
+    if (state.localOnly && state.selection.provider !== 'ollama') {
+      $('provider').value = 'ollama';
+      $('model').value = selected.ollama || state.models.ollama[0] || '';
+    }
     messages.replaceChildren();
     $('welcome').hidden = false;
     for (const entry of state.messages) {
@@ -167,17 +201,18 @@ async function refresh({ history = false } = {}) {
           if (!state.busy) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(); }
         } catch (error) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(error.message); }
       }, 4000);
-    } else if (state.localOnly) notice('Document conversation: local models only. Web search and MCP tools are disabled.');
+    } else if (state.localOnly) notice('This chat or project uses local models only. Web search and MCP tools are disabled.');
     else if (!state.openaiConfigured) notice('OpenAI chat and web research need OPENAI_API_KEY on the backend. You can still use a tool-capable Ollama model for local design work.');
     else notice(state.warnings.join(' · '));
   }
+  if (!history && state.warnings.length) notice(state.warnings.join(' · '));
   modelOptions();
 }
 
 $('provider').addEventListener('change', () => {
   $('model').value = selected[$('provider').value] || state.models[$('provider').value]?.[0] || '';
   modelOptions();
-  notice(state.localOnly ? 'Document conversation: local models only. Web search and MCP tools are disabled.' : $('provider').value === 'ollama' ? (state.ollamaError || 'Choose an Ollama model with tool support. Web research still uses OpenAI.') : (!state.openaiConfigured ? 'Set OPENAI_API_KEY on the backend and restart.' : ''));
+  notice(state.localOnly ? 'This chat or project uses local models only. Web search and MCP tools are disabled.' : $('provider').value === 'ollama' ? (state.ollamaError || 'Choose an Ollama model with tool support. Web research still uses OpenAI.') : (!state.openaiConfigured ? 'Set OPENAI_API_KEY on the backend and restart.' : ''));
 });
 $('model').addEventListener('change', () => { selected[$('provider').value] = $('model').value; });
 document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => { $('message').value = button.dataset.prompt; $('message').focus(); }));
@@ -186,15 +221,40 @@ $('toggle-sidebar').addEventListener('click', () => showSidebar(!$('workspace-si
 $('close-sidebar').addEventListener('click', () => { showSidebar(false); $('toggle-sidebar').focus(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') showSidebar(false); });
 $('stop').addEventListener('click', () => api('/api/abort', { method: 'POST' }).catch(error => notice(error.message)));
-$('new-chat').addEventListener('click', async () => {
+$('new-chat').addEventListener('click', () => navigate('/api/new'));
+$('new-project-conversation').addEventListener('click', () => navigate('/api/projects/conversations/new'));
+$('new-project').addEventListener('click', () => {
+  $('project-error').textContent = '';
+  $('project-dialog').showModal();
+  $('project-name').focus();
+});
+$('close-project').addEventListener('click', () => $('project-dialog').close());
+$('project-form').addEventListener('submit', async event => {
+  event.preventDefault();
   if (running) return;
-  setRunning(true);
+  setRunning(true); $('create-project').disabled = true;
   try {
-    await api('/api/new', { method: 'POST' });
+    await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('project-name').value, description: $('project-description').value }) });
     pendingFiles = []; $('attachments').replaceChildren();
     await refresh({ history: true });
-    showSidebar(false);
+    $('project-dialog').close(); $('project-form').reset(); showSidebar(false);
+  } catch (error) { $('project-error').textContent = error.message; }
+  finally { setRunning(false); $('create-project').disabled = false; }
+});
+$('git-tracking').addEventListener('change', async () => {
+  const enabled = $('git-tracking').checked;
+  setRunning(true);
+  try {
+    await api('/api/git', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+    notice(enabled ? 'Git tracking enabled. Conversations and artefacts are saved locally.' : 'Git tracking off. Previous history is retained.');
   } catch (error) { notice(error.message); }
+  finally { await refresh().catch(error => notice(error.message)); setRunning(false); }
+});
+$('save-snapshot').addEventListener('click', async () => {
+  setRunning(true);
+  try { await api('/api/snapshot', { method: 'POST' }); notice('Snapshot saved.'); }
+  catch (error) { notice(error.message); }
   finally { setRunning(false); }
 });
 $('attach').addEventListener('click', () => $('upload').click());

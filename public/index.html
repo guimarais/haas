@@ -61,6 +61,7 @@
         <textarea id="message" rows="2" maxlength="30000" placeholder="Describe what you want to make or find…" required></textarea>
         <div class="composer-bottom">
           <button id="attach" type="button" class="attach" title="Import working copies of design files">＋ <span>Attach files</span></button>
+          <button id="open-documents" type="button" class="documents-button">Documents</button>
           <input type="file" id="upload" multiple hidden>
           <div class="run-controls"><span id="status"><span class="dot"></span> Ready</span><button id="stop" type="button" hidden>Stop</button><button id="send" type="submit" aria-label="Send message">↑</button></div>
         </div>
@@ -68,5 +69,30 @@
       <div class="composer-note">Tools and skills run automatically. <span>Web research uses OpenAI, including with Ollama.</span></div>
     </div>
   </main>
+  <dialog id="documents-dialog" aria-labelledby="documents-heading">
+    <div class="documents-heading"><h2 id="documents-heading">Documents</h2><button type="button" id="close-documents" aria-label="Close documents">×</button></div>
+    <p class="muted small">Add documents to your local collection, organised by theme. Search them in a local Ollama conversation.</p>
+    <form id="document-form">
+      <fieldset id="document-fields">
+        <label for="document-file">Upload a document</label>
+        <input id="document-file" type="file" accept=".pdf,.html,.htm,.md,.markdown,.txt,.text">
+        <p class="small muted">PDF, HTML, Markdown or text · up to 25 MiB</p>
+        <label for="document-url">URL</label>
+        <input id="document-url" type="url" placeholder="https://example.com/document.pdf">
+        <p class="small muted">Use a URL as the source, or add an optional download URL for an uploaded file so it can be recovered later.</p>
+        <label for="document-title">Title <span class="muted">(optional)</span></label>
+        <input id="document-title" maxlength="500" type="text">
+        <label for="document-existing-themes">Existing themes</label>
+        <select id="document-existing-themes" multiple size="3" aria-describedby="theme-help"></select>
+        <p id="theme-help" class="small muted">Select any existing themes, or enter new ones below. Choose at least one.</p>
+        <label for="document-new-themes">Add themes <span class="muted">(comma separated)</span></label>
+        <input id="document-new-themes" type="text" placeholder="electronics, railway layouts">
+        <button type="submit" id="document-submit">Add to collection</button>
+      </fieldset>
+    </form>
+    <p id="document-progress" role="status" aria-live="polite"></p>
+    <h3>Your collection</h3>
+    <ul id="document-list" class="document-list"></ul>
+  </dialog>
 </body>
 </html>

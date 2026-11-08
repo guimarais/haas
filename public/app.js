@@ -32,7 +32,7 @@ function richText(element, text) {
   });
   for (const link of element.querySelectorAll('a')) {
     const target = link.getAttribute('href') || '';
-    const url = /^https?:\/\//i.test(target) ? target : fileUrl(target);
+    const url = /^https?:\/\//i.test(target) || /^\/documents\/[a-zA-Z0-9_-]+\/download(?:#page=\d+)?$/.test(target) ? target : fileUrl(target);
     if (url) {
       link.href = url;
       if (/^https?:/.test(url)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
@@ -144,6 +144,8 @@ function modelOptions() {
 
 async function refresh({ history = false } = {}) {
   state = await (await api('/api/state')).json();
+  $('provider').querySelector('option[value="openai"]').disabled = state.localOnly;
+  $('provider').title = state.localOnly ? 'This document conversation is restricted to local models.' : '';
   renderFiles(state.files);
   renderConversations(state.conversations);
   if (history) {
@@ -165,7 +167,8 @@ async function refresh({ history = false } = {}) {
           if (!state.busy) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(); }
         } catch (error) { clearInterval(reconnectTimer); reconnectTimer = null; setRunning(false); notice(error.message); }
       }, 4000);
-    } else if (!state.openaiConfigured) notice('OpenAI chat and web research need OPENAI_API_KEY on the backend. You can still use a tool-capable Ollama model for local design work.');
+    } else if (state.localOnly) notice('Document conversation: local models only. Web search and MCP tools are disabled.');
+    else if (!state.openaiConfigured) notice('OpenAI chat and web research need OPENAI_API_KEY on the backend. You can still use a tool-capable Ollama model for local design work.');
     else notice(state.warnings.join(' · '));
   }
   modelOptions();
@@ -174,7 +177,7 @@ async function refresh({ history = false } = {}) {
 $('provider').addEventListener('change', () => {
   $('model').value = selected[$('provider').value] || state.models[$('provider').value]?.[0] || '';
   modelOptions();
-  notice($('provider').value === 'ollama' ? (state.ollamaError || 'Choose an Ollama model with tool support. Web research still uses OpenAI.') : (!state.openaiConfigured ? 'Set OPENAI_API_KEY on the backend and restart.' : ''));
+  notice(state.localOnly ? 'Document conversation: local models only. Web search and MCP tools are disabled.' : $('provider').value === 'ollama' ? (state.ollamaError || 'Choose an Ollama model with tool support. Web research still uses OpenAI.') : (!state.openaiConfigured ? 'Set OPENAI_API_KEY on the backend and restart.' : ''));
 });
 $('model').addEventListener('change', () => { selected[$('provider').value] = $('model').value; });
 document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => { $('message').value = button.dataset.prompt; $('message').focus(); }));
@@ -267,3 +270,76 @@ $('composer').addEventListener('submit', async event => {
 });
 
 refresh({ history: true }).catch(error => notice(`Could not connect: ${error.message}`));
+
+async function refreshDocuments() {
+  const collection = await (await api('/api/documents')).json();
+  const selection = new Set([...$('document-existing-themes').selectedOptions].map(option => option.value));
+  $('document-existing-themes').replaceChildren();
+  for (const theme of [...new Set(collection.documents.flatMap(doc => doc.themes))].sort()) {
+    const option = document.createElement('option'); option.value = theme; option.textContent = theme; option.selected = selection.has(theme);
+    $('document-existing-themes').append(option);
+  }
+  $('document-list').replaceChildren();
+  if (!collection.documents.length) $('document-list').textContent = 'Your collection is empty.';
+  for (const doc of collection.documents) {
+    const item = document.createElement('li');
+    const title = document.createElement('strong'); title.textContent = doc.title;
+    const meta = document.createElement('p');
+    meta.textContent = `${doc.themes.join(' · ')} — ${doc.status.status}${doc.status.chunks ? ` · ${doc.status.chunks} passage${doc.status.chunks === 1 ? '' : 's'}` : ''}`;
+    const source = document.createElement('p');
+    source.className = 'small muted';
+    source.textContent = doc.source.url || 'Local upload: keep its original file to rebuild this collection.';
+    item.append(title, meta, source);
+    if (doc.status.error) { const error = document.createElement('p'); error.className = 'error'; error.textContent = doc.status.error; item.append(error); }
+    $('document-list').append(item);
+  }
+  if (collection.progress) $('document-progress').textContent = `Ingesting ${collection.progress.title || 'a document'}…`;
+}
+
+$('open-documents').addEventListener('click', () => {
+  $('documents-dialog').showModal();
+  refreshDocuments().catch(error => { $('document-progress').textContent = error.message; });
+});
+$('close-documents').addEventListener('click', () => $('documents-dialog').close());
+$('document-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const file = $('document-file').files[0];
+  const url = $('document-url').value.trim();
+  const title = $('document-title').value.trim();
+  const themes = [...$('document-existing-themes').selectedOptions].map(option => option.value)
+    .concat($('document-new-themes').value.split(',').map(value => value.trim()).filter(Boolean));
+  const progress = $('document-progress');
+  if ((!file && !url) || !themes.length) { progress.textContent = 'Choose a file or URL, and at least one theme.'; return; }
+  if (file?.size > 25 * 1024 * 1024) { progress.textContent = 'Documents must be no larger than 25 MiB.'; return; }
+  $('document-fields').disabled = true;
+  progress.textContent = file ? 'Uploading document…' : 'Downloading document…';
+  progress.scrollIntoView({ block: 'nearest' });
+  try {
+    const parameters = new URLSearchParams({ title, url, themes: JSON.stringify(themes), ...(file ? { name: file.name } : {}) });
+    const response = await api(`/api/documents/ingest${file ? `?${parameters}` : ''}`, {
+      method: 'POST', headers: { 'Content-Type': file ? 'application/octet-stream' : 'application/json' },
+      body: file || JSON.stringify({ title, url, themes }),
+    });
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', finished = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let newline;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const update = JSON.parse(line);
+        if (update.type === 'error') throw new Error(update.error);
+        if (update.type === 'done') {
+          finished = true; progress.textContent = update.skipped ? 'Already indexed; document is unchanged.' : `Added to collection: ${update.chunks} searchable passage${update.chunks === 1 ? '' : 's'}.`;
+          $('document-file').value = ''; $('document-url').value = ''; $('document-title').value = '';
+        } else if (update.stage === 'embedding') progress.textContent = `Indexing passages: ${update.completed} of ${update.total}…`;
+        else progress.textContent = ({ reading: 'Reading document…', extracting: 'Extracting text…', saving: 'Saving to your collection…' })[update.stage] || 'Ingesting document…';
+      }
+      if (done) { if (!finished) throw new Error('Connection interrupted. Reopen Documents to check the ingestion result.'); break; }
+    }
+  } catch (error) { progress.textContent = error.message; }
+  finally { $('document-fields').disabled = false; await refreshDocuments().catch(error => { progress.textContent = error.message; }); }
+});

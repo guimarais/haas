@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { APP, DATA as DEFAULT_DATA, WORKSPACE as DEFAULT_WORKSPACE, closeChat, createChat, messageText, ollamaModels, selectModel, transcript } from './agent.mjs';
 import { atomicJson, listFiles, safePath } from './workspace.mjs';
+import { Rag, MAX_DOCUMENT_BYTES } from './rag.mjs';
+import { documentConversation } from './rag-tools.mjs';
 
 const contentTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.pdf': 'application/pdf' };
 const cleanError = error => {
@@ -30,12 +32,13 @@ function json(response, value, status = 200) {
   response.end(JSON.stringify(value));
 }
 
-export async function startServer({ port = Number(process.env.PORT || 4317), dataDir: DATA = DEFAULT_DATA, workspace: WORKSPACE = DEFAULT_WORKSPACE, chatOptions = {} } = {}) {
+export async function startServer({ port = Number(process.env.PORT || 4317), dataDir: DATA = DEFAULT_DATA, workspace: WORKSPACE = DEFAULT_WORKSPACE, chatOptions = {}, ragOptions = {} } = {}) {
   const warnings = [];
   const onWarning = message => { warnings.push(String(message)); if (warnings.length > 5) warnings.shift(); };
   let sessionFile;
   try { ({ sessionFile } = JSON.parse(await readFile(path.join(DATA, 'current-session.json'), 'utf8'))); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const loadChat = options => createChat({ ...chatOptions, dataDir: DATA, workspace: WORKSPACE, onWarning, ...options });
+  const rag = new Rag({ dataDir: DATA, ...ragOptions });
+  const loadChat = options => createChat({ ...chatOptions, dataDir: DATA, workspace: WORKSPACE, rag, onWarning, ...options });
   let chat = await loadChat({ sessionFile });
   const rememberChat = () => atomicJson(path.join(DATA, 'current-session.json'), { sessionFile: chat.session.sessionManager.getSessionFile() });
   await rememberChat();
@@ -43,6 +46,7 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
   try { selection = JSON.parse(await readFile(path.join(DATA, 'selection.json'), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') onWarning('Saved model selection could not be read; using OpenAI.'); }
   // ponytail: one active conversation/run; independent concurrent runs only if needed.
   let busy = false;
+  let documentProgress, documentController, documentTask;
 
   async function conversations() {
     const currentId = chat.session.sessionManager.getSessionId();
@@ -76,7 +80,51 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
           skills: chat.skills, openaiConfigured: !!process.env.OPENAI_API_KEY, searchConfigured: !!process.env.OPENAI_API_KEY,
           models: { openai: chat.runtime.getModels('openai').map(model => model.id), ollama: localModels }, ollamaError,
           tools: chat.session.getAllTools().filter(tool => tool.name.startsWith('mcp__')).map(tool => tool.name), warnings,
+          localOnly: documentConversation(chat.session.sessionManager),
         });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/documents') {
+        return json(response, { documents: await rag.list(), progress: documentProgress, embeddingModel: rag.model });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/documents/ingest') {
+        if (documentController) return json(response, { error: 'A document is already being ingested. Wait for it to finish.' }, 409);
+        const controller = new AbortController();
+        documentController = controller;
+        let finish;
+        documentTask = new Promise(resolve => { finish = resolve; });
+        try {
+          let input, bytes;
+          if ((request.headers['content-type'] || '').startsWith('application/json')) {
+            const value = JSON.parse(await body(request));
+            if (!value.url) throw new Error('Supply a document URL or upload a file.');
+            input = { url: value.url, title: value.title, themes: value.themes };
+          } else {
+            input = { name: url.searchParams.get('name'), title: url.searchParams.get('title'), url: url.searchParams.get('url') || undefined,
+              themes: JSON.parse(url.searchParams.get('themes') || '[]') };
+            if (!input.name || /[\\/\x00-\x1f]/.test(input.name)) throw new Error('Supply a valid upload filename.');
+            bytes = await body(request, MAX_DOCUMENT_BYTES);
+          }
+          response.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Accel-Buffering': 'no' });
+          const send = value => { if (!response.destroyed) response.write(`${JSON.stringify(value)}\n`); };
+          const result = await rag.ingest(input, { bytes, signal: controller.signal, onProgress: progress => {
+            documentProgress = progress; send({ type: 'progress', ...progress });
+          } });
+          send({ type: 'done', ...result });
+          response.end();
+        } catch (error) {
+          if (response.headersSent) { if (!response.destroyed) response.end(`${JSON.stringify({ type: 'error', error: cleanError(error) })}\n`); }
+          else json(response, { error: cleanError(error) }, error.status || 400);
+        } finally { documentProgress = undefined; documentController = undefined; finish(); documentTask = undefined; }
+        return;
+      }
+      if (request.method === 'GET' && /^\/documents\/[a-zA-Z0-9_-]+\/download$/.test(url.pathname)) {
+        const file = await rag.original(url.pathname.split('/')[2]);
+        const pdf = path.extname(file) === '.pdf';
+        response.writeHead(200, { 'Content-Type': pdf ? 'application/pdf' : 'application/octet-stream',
+          'Content-Disposition': `${pdf ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(path.basename(file))}` });
+        const stream = createReadStream(file);
+        stream.on('error', () => response.destroy()); stream.pipe(response);
+        return;
       }
       if (request.method === 'POST' && url.pathname === '/api/chat') {
         if (busy) return json(response, { error: 'A task is already running. Stop it or wait for completion.' }, 409);
@@ -180,7 +228,14 @@ export async function startServer({ port = Number(process.env.PORT || 4317), dat
     server.once('error', reject);
     server.listen(port, '127.0.0.1', resolve);
   });
-  return { server, url: `http://127.0.0.1:${server.address().port}`, async close() { await closeChat(chat); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+  return { server, url: `http://127.0.0.1:${server.address().port}`, async close() {
+    documentController?.abort();
+    const closed = new Promise(resolve => server.close(resolve));
+    server.closeAllConnections();
+    await documentTask;
+    await closeChat(chat);
+    await closed;
+  } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
